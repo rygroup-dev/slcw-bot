@@ -243,7 +243,15 @@ class Orchestrator:
         if (state.location_id in BATTLE_LOCATIONS
                 and state.energy >= econ.BATTLE_ENERGY
                 and state.health_ratio >= BATTLE_MIN_HEALTH_RATIO):
-            monster = select_monster(None, state.level, state.health_ratio)
+            # Real combat stats decide what is survivable, and measured
+            # outcomes decide what is worth fighting.
+            stats = build_mod.derive(state.attributes, state.equipment)
+            monster = select_monster(
+                None, state.level, state.health_ratio,
+                weapon_power=stats.weapon_power,
+                physical_defense=stats.physical_defense,
+                current_health=state.health,
+                memory=self.combat, market=market, rng=self.rng)
             if monster:
                 drop_values = {}
                 if not stale:
@@ -440,6 +448,7 @@ class Orchestrator:
             raise ApiError("startBattle returned no battleId")
 
         turns = 0
+        damage_taken = 0
         finished = False
         for _ in range(self.config.battle_max_turns):
             time.sleep(self.rng.uniform(1.8, 3.6))
@@ -449,13 +458,22 @@ class Orchestrator:
             turn_result = outcome.get("turnResult") or {}
             if turn_result:
                 self.combat.observe(monster_id, turn_result)
+                incoming = turn_result.get("monster") or {}
+                if incoming.get("type") in ("hit", "crit"):
+                    damage_taken += int(incoming.get("damage", 0) or 0)
             if outcome.get("isOver"):
                 finished = True
                 break
 
-        self.combat.save()
         time.sleep(self.rng.uniform(1.5, 3.0))
         reward = self.api.finish_activity(session)
+
+        # Record what the fight actually cost and returned. Drop tables are
+        # server-side, so this is the only way the engine can learn a monster's
+        # worth rather than assume it.
+        summary = (reward or {}).get("rewardSummary") or {}
+        self.combat.record_battle(monster_id, summary, turns, damage_taken)
+        self.combat.save()
         return {
             "battleId": battle_id,
             "monsterId": monster_id,

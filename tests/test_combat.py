@@ -174,3 +174,113 @@ class MonsterRegistryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SurvivabilityTests(unittest.TestCase):
+    """Level is a gate; whether we survive depends on actual combat stats."""
+
+    def test_a_weak_character_refuses_a_tanky_monster(self):
+        from slcw.combat import survivable
+        # aerial_lvl4_1 against a starting character.
+        self.assertFalse(survivable("aerial_lvl4_1", weapon_power=6,
+                                    physical_defense=18, current_health=30))
+
+    def test_a_strong_character_accepts_it(self):
+        from slcw.combat import survivable
+        self.assertTrue(survivable("aerial_lvl4_1", weapon_power=200,
+                                   physical_defense=200, current_health=1000))
+
+    def test_more_health_makes_a_fight_acceptable(self):
+        from slcw.combat import survivable
+        weak = survivable("spider_lvl2_1", 6, 18, current_health=20)
+        strong = survivable("spider_lvl2_1", 6, 18, current_health=500)
+        self.assertFalse(weak)
+        self.assertTrue(strong)
+
+    def test_unknown_monster_is_not_blocked(self):
+        from slcw.combat import survivable
+        self.assertTrue(survivable("mystery", 1, 1, 1))
+
+    def test_selection_drops_monsters_it_cannot_survive(self):
+        chosen = select_monster(
+            None, player_level=10, health_ratio=1.0,
+            weapon_power=6, physical_defense=18, current_health=25)
+        self.assertIsNotNone(chosen)
+        from slcw.combat import survivable
+        self.assertTrue(survivable(chosen, 6, 18, 25))
+
+
+class MeasuredValueTests(unittest.TestCase):
+    """Drop tables are server-side, so worth is learned rather than looked up."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.memory = CombatMemory(path=Path(self.tmp.name) / "combat.json")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _fight(self, monster_id, xp=22, items=None, wins=True, turns=4, damage=5):
+        self.memory.record_battle(monster_id, {
+            "winner": "player" if wins else "monster", "xp": xp,
+            "items": items or []}, turns, damage)
+
+    def test_unfought_monster_is_worth_nothing_measurable(self):
+        from slcw.combat import expected_value
+        self.assertEqual(expected_value("bigfrog_lvl1_1", self.memory), 0.0)
+
+    def test_value_rises_with_observed_xp(self):
+        from slcw.combat import expected_value
+        self._fight("bigfrog_lvl1_1", xp=22)
+        self._fight("forestspider_lvl1_2", xp=100)
+        self.assertGreater(expected_value("forestspider_lvl1_2", self.memory),
+                           expected_value("bigfrog_lvl1_1", self.memory))
+
+    def test_drops_are_priced_from_the_live_market(self):
+        from slcw.combat import expected_value
+        from slcw.market import build_snapshot
+        market = build_snapshot([{"status": "open", "type": "buy",
+                                  "templateId": "frogslime", "price": 500,
+                                  "quantity": 99, "filled": 0}])
+        self._fight("bigfrog_lvl1_1", xp=1, items=[{"id": "frogslime", "quantity": 2}])
+        with_market = expected_value("bigfrog_lvl1_1", self.memory, market)
+        without = expected_value("bigfrog_lvl1_1", self.memory, None)
+        self.assertGreater(with_market, without)
+
+    def test_losses_discount_the_value(self):
+        from slcw.combat import expected_value
+        for _ in range(4):
+            self._fight("bigfrog_lvl1_1", xp=22, wins=True)
+            self._fight("forestspider_lvl1_2", xp=22, wins=False)
+        self.assertGreater(expected_value("bigfrog_lvl1_1", self.memory),
+                           expected_value("forestspider_lvl1_2", self.memory))
+
+    def test_selection_prefers_the_monster_that_actually_paid(self):
+        rng = random.Random(4)
+        for _ in range(6):
+            self._fight("bigfrog_lvl1_1", xp=5)
+            self._fight("forestspider_lvl1_2", xp=200)
+        picks = [select_monster(["bigfrog_lvl1_1", "forestspider_lvl1_2"],
+                                player_level=1, health_ratio=1.0,
+                                memory=self.memory, rng=rng) for _ in range(30)]
+        self.assertGreater(picks.count("forestspider_lvl1_2"),
+                           picks.count("bigfrog_lvl1_1"))
+
+    def test_something_untried_is_still_tried(self):
+        """Without discovery the bot would farm its first monster forever."""
+        rng = random.Random(1)
+        for _ in range(10):
+            self._fight("bigfrog_lvl1_1", xp=500)
+        seen = {select_monster(["bigfrog_lvl1_1", "forestspider_lvl1_2"],
+                               player_level=1, health_ratio=1.0,
+                               memory=self.memory, rng=rng) for _ in range(200)}
+        self.assertIn("forestspider_lvl1_2", seen)
+
+    def test_battle_outcomes_survive_a_reload(self):
+        self._fight("bigfrog_lvl1_1", xp=22, items=[{"id": "frogslime", "quantity": 3}])
+        self.memory.save()
+        reloaded = CombatMemory(path=self.memory.path)
+        model = reloaded.models["bigfrog_lvl1_1"]
+        self.assertEqual(model.battles, 1)
+        self.assertEqual(model.drops["frogslime"], 3)
+        self.assertEqual(model.avg_xp, 22)

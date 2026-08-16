@@ -33,15 +33,77 @@ EXPLORATION_RATE = 0.18
 # Laplace smoothing, so a single observation cannot drive the model to certainty.
 PRIOR = 1.0
 
+# Expected damage must stay this far below current health before a fight is
+# accepted. The damage formula is not published, so the estimate is coarse and
+# the margin absorbs that.
+SURVIVAL_MARGIN = 0.6
+
+# How often to fight something never fought before. Drop tables are server-side,
+# so a monster's worth is unknown until it has been tried at least once.
+DISCOVERY_RATE = 0.15
+
 
 @dataclass
 class MonsterModel:
-    """Per-monster estimates of which zones it blocks and which it attacks."""
+    """What fighting this monster has actually cost and returned.
+
+    Drop tables are server-side and appear nowhere in the frontend, so what a
+    monster is worth cannot be looked up — only measured. Every finished battle
+    adds to these counters, and monster choice is made from them rather than
+    from an invented damage formula.
+    """
 
     attacks_attempted: dict = field(default_factory=lambda: {z: 0 for z in ZONES})
     attacks_blocked: dict = field(default_factory=lambda: {z: 0 for z in ZONES})
     monster_attacks: dict = field(default_factory=lambda: {z: 0 for z in ZONES})
     rounds: int = 0
+
+    # --- outcomes, filled in when a battle settles -----------------------
+    battles: int = 0
+    wins: int = 0
+    total_turns: int = 0
+    total_damage_taken: int = 0
+    total_xp: int = 0
+    total_gold: int = 0
+    drops: dict = field(default_factory=dict)
+
+    @property
+    def win_rate(self) -> float:
+        return self.wins / self.battles if self.battles else 0.0
+
+    @property
+    def avg_turns(self) -> float:
+        return self.total_turns / self.battles if self.battles else 0.0
+
+    @property
+    def avg_damage(self) -> float:
+        return self.total_damage_taken / self.battles if self.battles else 0.0
+
+    @property
+    def avg_xp(self) -> float:
+        return self.total_xp / self.battles if self.battles else 0.0
+
+    def avg_drops(self) -> dict:
+        """Expected items per battle, from what actually dropped."""
+        if not self.battles:
+            return {}
+        return {item: count / self.battles for item, count in self.drops.items()}
+
+    def record_battle(self, reward: dict, turns: int, damage_taken: int) -> None:
+        """Fold one settled battle into the running totals."""
+        self.battles += 1
+        self.total_turns += max(0, int(turns))
+        self.total_damage_taken += max(0, int(damage_taken))
+
+        reward = reward or {}
+        if reward.get("winner") == "player":
+            self.wins += 1
+        self.total_xp += int(reward.get("xp", 0) or 0)
+        self.total_gold += int(reward.get("gold", 0) or 0)
+        for item in reward.get("items") or []:
+            key = item.get("id")
+            if key:
+                self.drops[key] = self.drops.get(key, 0) + int(item.get("quantity", 0) or 0)
 
     def block_rate(self, zone: str) -> float:
         attempted = self.attacks_attempted.get(zone, 0)
@@ -82,6 +144,13 @@ class MonsterModel:
             "attacks_blocked": self.attacks_blocked,
             "monster_attacks": self.monster_attacks,
             "rounds": self.rounds,
+            "battles": self.battles,
+            "wins": self.wins,
+            "total_turns": self.total_turns,
+            "total_damage_taken": self.total_damage_taken,
+            "total_xp": self.total_xp,
+            "total_gold": self.total_gold,
+            "drops": self.drops,
         }
 
     @classmethod
@@ -93,6 +162,10 @@ class MonsterModel:
             for zone in ZONES:
                 target[zone] = int(stored.get(zone, 0))
         model.rounds = int(payload.get("rounds", 0))
+        for key in ("battles", "wins", "total_turns", "total_damage_taken",
+                    "total_xp", "total_gold"):
+            setattr(model, key, int(payload.get(key, 0) or 0))
+        model.drops = {k: int(v) for k, v in (payload.get("drops") or {}).items()}
         return model
 
 
@@ -135,6 +208,10 @@ class CombatMemory:
 
     def observe(self, monster_id: str, turn: dict) -> None:
         self.model_for(monster_id).observe(turn)
+
+    def record_battle(self, monster_id: str, reward: dict, turns: int,
+                      damage_taken: int) -> None:
+        self.model_for(monster_id).record_battle(reward, turns, damage_taken)
 
 
 def monster_level(monster_id: str) -> int:
@@ -179,15 +256,65 @@ def known_monsters(max_level: int | None = None) -> list[str]:
     return sorted(ids, key=lambda m: (MONSTERS[m][1], m))
 
 
-def select_monster(catalog: list[str] | None, player_level: int,
-                   health_ratio: float) -> str | None:
-    """Strongest monster that is still safe at the current health.
+def survivable(monster_id: str, weapon_power: float, physical_defense: float,
+               current_health: int) -> bool:
+    """Whether the fight is winnable without dropping to zero.
 
-    Among equals the least dangerous one wins: same level, lower weapon power
-    means fewer hit points lost per fight and so less rest time between them.
+    Deliberately crude, because the exact damage formula is not published: a
+    monster is refused when our attack cannot out-pace its health pool, or when
+    its attack out-paces our defence badly enough that a long fight would run us
+    out of hit points. Observed results override this as soon as any exist.
     """
-    # None means "use the full registry"; an empty list means "nothing available"
-    # and must not silently fall back to every monster in the game.
+    entry = MONSTERS.get(monster_id)
+    if entry is None:
+        return True
+    _, _, mon_power, mon_defense, _, mon_health = entry
+
+    # Effective damage per side, floored at 1 so nothing is unkillable on paper.
+    our_damage = max(1.0, weapon_power - mon_defense * 0.5)
+    their_damage = max(1.0, mon_power - physical_defense * 0.25)
+
+    turns = mon_health / our_damage
+    expected_loss = turns * their_damage
+    return expected_loss < current_health * SURVIVAL_MARGIN
+
+
+def expected_value(monster_id: str, memory: "CombatMemory | None",
+                   market=None, xp_gold: float = 8.0) -> float:
+    """Gold-equivalent per battle, from what this monster has actually given.
+
+    Returns 0 for a monster never fought, which is what keeps exploration
+    deliberate rather than accidental.
+    """
+    if memory is None or monster_id not in memory.models:
+        return 0.0
+    model = memory.models[monster_id]
+    if not model.battles:
+        return 0.0
+
+    value = model.avg_xp * xp_gold + (model.total_gold / model.battles)
+    if market is not None:
+        for item, per_battle in model.avg_drops().items():
+            bid = market.best_bid(item) or 0.0
+            value += bid * per_battle
+    return value * max(model.win_rate, 0.1)
+
+
+def select_monster(catalog: list[str] | None, player_level: int,
+                   health_ratio: float, weapon_power: float | None = None,
+                   physical_defense: float | None = None,
+                   current_health: int | None = None,
+                   memory: "CombatMemory | None" = None, market=None,
+                   rng: random.Random | None = None) -> str | None:
+    """Pick the most rewarding monster we can actually beat.
+
+    Level is a gate, not the goal. Within what is survivable at our real combat
+    stats, the choice is made on measured returns — XP, gold and drops priced at
+    live bids — because drop tables are server-side and cannot be read anywhere.
+    Unfought monsters are tried occasionally so the measurements can exist at
+    all; without that the bot would farm its first monster forever.
+    """
+    rng = rng or random
     source = known_monsters() if catalog is None else list(catalog)
     pool = [m for m in source if m in MONSTERS] or source
     if not pool:
@@ -196,8 +323,23 @@ def select_monster(catalog: list[str] | None, player_level: int,
     ceiling = player_level if health_ratio >= 0.8 else max(1, player_level - 2)
     eligible = [m for m in pool if monster_level(m) <= ceiling]
     if not eligible:
-        # Nothing at or below the ceiling: take the weakest thing available
-        # rather than refusing to fight at all.
         return min(pool, key=lambda m: (monster_level(m), monster_power(m)))
+
+    # Drop anything our stats say we would lose, when stats are available.
+    if None not in (weapon_power, physical_defense, current_health):
+        safe = [m for m in eligible
+                if survivable(m, weapon_power, physical_defense, current_health)]
+        eligible = safe or eligible
+
+    measured = [m for m in eligible
+                if memory and memory.models.get(m) and memory.models[m].battles]
+    untried = [m for m in eligible if m not in measured]
+
+    # Try something new now and then, and always when nothing is measured yet.
+    if untried and (not measured or rng.random() < DISCOVERY_RATE):
+        return max(untried, key=monster_level)
+
+    if measured:
+        return max(measured, key=lambda m: expected_value(m, memory, market))
 
     return max(eligible, key=lambda m: (monster_level(m), -monster_power(m)))
