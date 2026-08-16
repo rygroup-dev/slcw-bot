@@ -42,9 +42,9 @@ class GuardrailTests(unittest.TestCase):
         with self.assertRaises(guardrails.GuardrailViolation):
             guardrails.check("joinArenaQueue")
 
-    def test_denies_buy_level(self):
-        with self.assertRaises(guardrails.GuardrailViolation):
-            guardrails.check("buyLevel")
+    def test_allows_free_level_up(self):
+        """Only the diamond booster costs anything; slcw.leveling pins it to none."""
+        guardrails.check("buyLevel")
 
     def test_allows_gathering(self):
         guardrails.check("startFarming")

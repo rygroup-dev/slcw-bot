@@ -30,6 +30,10 @@ ALLOWED_CALLABLES = frozenset({
     "updateDisplayName",
 
     # --- free claims ----------------------------------------------------
+    # Levelling is a manual click in the profile, and only the diamond booster
+    # costs anything: the client charges 99*(level+1) diamonds in that branch
+    # alone. slcw.leveling pins the booster to "none", so this spends XP only.
+    "buyLevel",
     "claimInitialReward",
     "finishActivity",
     "completeNewbieQuest",
@@ -116,7 +120,6 @@ DENIED_CALLABLES = {
 
     # --- gold-costed, with no measured return ----------------------------
     "payCityEntryFee": "costs 50 or 1000 gold with no measured return",
-    "buyLevel": "cost model not established",
     "becomeCitizen": "costs gold, return not measured",
     "renounceCitizenship": "discards a paid-for status",
     "expandInventory": "costs currency, return not measured",

@@ -58,11 +58,13 @@ class FakeApi:
 
 def state_of(**overrides):
     doc = {
-        "level": 6, "xp": 1398, "balance": 0, "energy": 85, "maxEnergy": 100,
+        # Level 15 at grade 1 sits on the grade cap, so no free level-up is
+        # available and each test exercises the behaviour it names.
+        "level": 15, "xp": 1398, "balance": 0, "energy": 85, "maxEnergy": 100,
         "currentHealth": 130, "currentMana": 130, "attributePoints": 0,
         "currentLocationId": "city_2",
         "attributes": {"wisdom": 3, "vitality": 3},
-        "claimedInitialRewardsV2": [1, 2, 3, 4, 5, 6],
+        "claimedInitialRewardsV2": list(range(1, 16)),
         "activity": None,
     }
     doc.update(overrides)

@@ -6,7 +6,7 @@
 
 [![tests](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml/badge.svg)](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml)
 [![python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab?logo=python&logoColor=white)](https://www.python.org/)
-[![tests](https://img.shields.io/badge/tests-484%20passing-4c1)](tests/)
+[![tests](https://img.shields.io/badge/tests-524%20passing-4c1)](tests/)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 Every action is priced in gold-per-hour before it runs.
@@ -190,7 +190,8 @@ and takes the best.
 |---|---|
 | `finishActivity` | **∞** — the reward is already earned, it is sitting there |
 | `claimInitialReward` | **∞** — free |
-| `spendAttributePoints` | **∞** — free progression |
+| `buyLevel` | **∞** — free with the "none" booster; only diamonds cost |
+| `spendAttributePoints` | **∞** — free progression, allocated by build policy |
 | `refillEnergyFree` | **∞** — three a day, free, and energy gates everything |
 | `claimTaskReward`, `acceptTask` | **∞** — free gold from the hunt ladder |
 | `openChests` | **∞** — free loot sitting in an inventory slot |

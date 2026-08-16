@@ -331,6 +331,8 @@ class TelegramBot:
                               ui.main_menu()),
             "inventory": lambda: (ui.render_inventory(self.fleet_state()),
                                   ui.main_menu()),
+            "profile": lambda: (ui.render_profile(self.fleet_state(), self.config.build),
+                                ui.main_menu()),
             "crafting": lambda: (self.crafting_text(), ui.main_menu()),
             "control": lambda: (self.control_text(), self.control_markup()),
             "vault": lambda: (self.vault_text(), ui.vault_menu(self.vault.is_unlocked)),

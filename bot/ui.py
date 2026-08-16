@@ -19,7 +19,7 @@ MAIN_ROWS = (
     [("📊 Status", "nav:status"), ("💰 Profit", "nav:profit")],
     [("🏪 Market", "nav:market"), ("⚗️ Ekonomi", "nav:economy")],
     [("⚔️ Combat", "nav:combat"), ("🎯 Task", "nav:tasks")],
-    [("🎒 Inventory", "nav:inventory"), ("🗺 Peta", "nav:map")],
+    [("🎒 Inventory", "nav:inventory"), ("🧬 Profil", "nav:profile")],
     [("👛 Wallets", "wallet:list"), ("🔨 Crafting", "nav:crafting")],
     [("⚙️ Kontrol", "nav:control"), ("🔐 Vault", "nav:vault")],
 )
@@ -1093,6 +1093,53 @@ def render_p2p_plan(source: dict, destination: dict, amount: float,
     lines.append("<i>Transaksi on-chain tidak bisa dibatalkan.</i>" if affordable
                  else "❌ <b>Saldo tidak cukup</b> setelah biaya dan cadangan "
                       "rent-exempt.")
+    return "\n".join(lines)
+
+
+def render_profile(fleet_state: dict, build_name: str) -> str:
+    """Attributes, the stats they produce, and what the build is aiming at."""
+    from slcw import build as build_mod
+
+    policy = build_mod.get_build(build_name)
+    wallets = fleet_state.get("wallets", {})
+
+    lines = [f"<b>🧬 Profil</b> · build <b>{policy.name}</b>", "",
+             f"<i>{policy.summary}</i>", ""]
+
+    shown = 0
+    for wallet_id, status in sorted(wallets.items()):
+        state = status.get("state") or {}
+        attributes = state.get("attributes") or {}
+        if not attributes:
+            continue
+        stats = build_mod.derive(attributes, status.get("equipment") or {})
+
+        lines.append(f"<b>{wallet_id}</b> · Lv{state.get('level', '?')} · "
+                     f"grade {state.get('grade', '?')}")
+        lines.append("  " + " ".join(
+            f"{name[:3].upper()}{int(attributes.get(name, 0))}"
+            for name in build_mod.ATTRIBUTES))
+        lines.append(f"  ⚔️ {stats.weapon_power:.0f} atk · "
+                     f"🛡 {stats.physical_defense:.0f} def · "
+                     f"🎯 {stats.precision:.0f} · ❤️ {stats.max_health}")
+        if stats.set_bonus:
+            lines.append(f"  ✨ set {html.escape(stats.set_bonus)} aktif")
+        points = state.get("attribute_points") or 0
+        if points:
+            nxt = build_mod.next_attribute(attributes, build_name)
+            lines.append(f"  🔵 {points} poin belum dipakai → berikutnya {nxt}")
+        lines.append("")
+        shown += 1
+        if shown >= 5:
+            break
+
+    if not shown:
+        return ("<b>🧬 Profil</b>\n\n" + WAITING_FOR_CYCLE)
+
+    lines.append("<i>Rumus dari halaman profil game: atk = 2×might, "
+                 "def = 2×vitality + might + 1,5×dexterity, "
+                 "HP = 100 + 10×vitality. Ganti build lewat "
+                 "<code>SLCW_BUILD</code>: sustain · balanced · damage.</i>")
     return "\n".join(lines)
 
 

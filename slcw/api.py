@@ -71,6 +71,10 @@ class GameApi:
     def finish_activity(self, session) -> dict:
         return self._call(session, "finishActivity")
 
+    def buy_level(self, session, payload: dict) -> dict:
+        """Free level-up. Payload comes from slcw.leveling.payload()."""
+        return self._call(session, "buyLevel", payload)
+
     def claim_initial_reward(self, session, level: int) -> dict:
         return self._call(session, "claimInitialReward", {"level": level})
 

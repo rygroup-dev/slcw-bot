@@ -85,6 +85,8 @@ class Config:
     travel_margin: float = field(default_factory=lambda: _float("SLCW_TRAVEL_MARGIN", 1.35))
     # Item drops worth at least this much (at best bid) raise a Telegram alert.
     rich_drop_gold: int = field(default_factory=lambda: _int("SLCW_RICH_DROP_GOLD", 2000))
+    # Which attribute build to pursue: sustain, balanced, or damage.
+    build: str = field(default_factory=lambda: os.environ.get("SLCW_BUILD", "sustain"))
     # Solana RPC for wallet funding. The public endpoint rate-limits readily, so
     # point this at a dedicated provider before sending to many wallets.
     solana_rpc: str = field(default_factory=lambda: os.environ.get(

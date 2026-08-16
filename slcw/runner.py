@@ -14,7 +14,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 
-from . import inventory as inv_mod, ledger, market as market_mod, scheduler, tasks
+from . import inventory as inv_mod, ledger, leveling, market as market_mod, scheduler, tasks
 from .api import GameApi
 from .auth import AuthError, SessionManager
 from .config import DATA, Config
@@ -238,6 +238,8 @@ class Fleet:
                 status.state["slots_max"] = inventory.max_slots
                 status.state["chests"] = sum(c.quantity for c in inventory.chests())
             status.state["professions"] = state.professions or {}
+            status.state["attributes"] = state.attributes or {}
+            status.state["xp_needed"] = leveling.xp_required(state.level)
             status.equipment = state.equipment or {}
 
             if decision.error:

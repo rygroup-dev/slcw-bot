@@ -6,7 +6,8 @@ import time
 from dataclasses import dataclass, field, replace
 
 from . import economy as econ
-from . import farming, inventory as inv_mod, refining, world
+from . import build as build_mod
+from . import farming, inventory as inv_mod, leveling, refining, world
 from .combat import CombatMemory, select_monster
 from .config import Config
 from .guardrails import GuardrailViolation
@@ -144,11 +145,23 @@ class Orchestrator:
                 "claimInitialReward", {"level": unclaimed[0]},
                 f"level {unclaimed[0]} reward unclaimed")]
 
+        # Levelling is manual and free, and each level grants an attribute
+        # point — so it comes before spending them.
+        if leveling.can_level_up(state.level, state.grade, state.xp):
+            return [econ.free_candidate(
+                "buyLevel", leveling.payload(),
+                f"level {state.level} → {state.level + 1} "
+                f"({state.xp:,}/{leveling.xp_required(state.level):,} xp)")]
+
         if state.attribute_points > 0:
+            # Points left unspent do nothing at all, and which one to raise is a
+            # policy choice rather than a fact — so it is named and configurable.
+            target = build_mod.next_attribute(state.attributes, self.config.build)
             return [econ.free_candidate(
                 "spendAttributePoints",
-                {"targetType": "attribute", "targetId": "vitality", "amount": 1},
-                f"{state.attribute_points} attribute point(s) unspent")]
+                {"targetType": "attribute", "targetId": target, "amount": 1},
+                f"{state.attribute_points} point(s) unspent → {target} "
+                f"({self.config.build} build)")]
 
         # Three free refills a day, and energy gates almost everything. Only worth
         # taking once the bar has drained enough that a refill is not wasted.
@@ -378,6 +391,8 @@ class Orchestrator:
         action = candidate.action
         if action == "finishActivity":
             return self.api.finish_activity(session)
+        if action == "buyLevel":
+            return self.api.buy_level(session, candidate.params)
         if action == "claimInitialReward":
             return self.api.claim_initial_reward(session, candidate.params["level"])
         if action == "spendAttributePoints":
