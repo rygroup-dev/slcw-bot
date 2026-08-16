@@ -114,6 +114,39 @@ def vault_menu(unlocked: bool) -> str:
 
 # --- renderers -----------------------------------------------------------
 
+# --- shared copy ---------------------------------------------------------
+
+WAITING_FOR_CYCLE = ("Belum ada state wallet.\n\n"
+                     "<i>Tunggu siklus pertama selesai — biasanya di bawah satu "
+                     "menit setelah vault dibuka.</i>")
+
+ECONOMY_INTRO = (
+    "<b>⚗️ Ekonomi</b>\n\n"
+    "Bahan mentah tidak punya bid sama sekali; yang laku hanya barang olahan. "
+    "Rantai profit menunjukkan di mana nilainya muncul dan berapa ongkos tiap "
+    "mata rantainya.\n\n"
+    "<i>Semua angka diambil dari order book langsung dan rumus biaya milik game, "
+    "bukan perkiraan.</i>")
+
+NEW_WALLET_INTRO = (
+    "<b>➕ Tambah wallet</b>\n\n"
+    "<b>Buat baru</b> — keypair Solana dibuat lokal, langsung dienkripsi, lalu "
+    "onboarding in-game jalan otomatis di siklus pertama. Tidak butuh SOL sama "
+    "sekali.\n\n"
+    "<b>Import</b> — pakai akun yang sudah ada.\n\n"
+    "Bot <b>tidak pernah</b> memindahkan dana.\n\n"
+    "Berapa wallet baru?")
+
+
+def _dot(ok: bool, warn: bool = False) -> str:
+    return "🟡" if warn else ("🟢" if ok else "🔴")
+
+
+def _kv(label: str, value: str, width: int = 14) -> str:
+    """Aligned label/value line — keeps numeric columns readable on mobile."""
+    return f"<code>{label:<{width}}</code>{value}"
+
+
 def _bar(current: int, maximum: int, width: int = 10) -> str:
     if maximum <= 0:
         return "─" * width
@@ -650,6 +683,108 @@ def render_combat(memory) -> str:
     lines.append("<i>Serang zona yang paling jarang diblok, tangkis zona yang "
                  "paling sering diserang. 18% langkah tetap acak untuk eksplorasi.</i>")
     return "\n".join(lines)
+
+
+def render_control(total: int, paused: int, dry_run: bool, enabled: bool,
+                   unlocked: bool, latency_ms: float, queue_depth: int) -> str:
+    active = total - paused
+    lines = [
+        "<b>⚙️ Kontrol</b>", "",
+        _kv("Wallet", f"{total} · {_dot(active > 0)} {active} aktif · ⏸ {paused} pause"),
+        _kv("Mode", "🧪 dry-run" if dry_run else "🚀 live"),
+        _kv("Engine", f"{_dot(enabled)} {'aktif' if enabled else 'claim-only'}"),
+        _kv("Vault", f"{_dot(unlocked)} {'terbuka' if unlocked else 'terkunci'}"),
+        "",
+        "<b>Telegram</b>",
+        _kv("Latensi", f"{_dot(latency_ms < 400, warn=latency_ms >= 400)} "
+                       f"{latency_ms:.0f} ms rata-rata"),
+        _kv("Antrian", f"{_dot(queue_depth < 3, warn=queue_depth >= 3)} "
+                       f"{queue_depth} update"),
+    ]
+    return "\n".join(lines)
+
+
+def render_vault(unlocked: bool, wallet_count: int) -> str:
+    if unlocked:
+        return ("<b>🔐 Vault terbuka</b>\n\n"
+                f"{wallet_count} wallet terdekripsi di memori.\n\n"
+                "<i>Kunci privat tidak pernah ditulis ke disk dalam bentuk polos, "
+                "dan tidak pernah dikirim lewat Telegram.</i>")
+    return ("<b>🔐 Vault terkunci</b>\n\n"
+            "Engine idle sampai dibuka.\n"
+            "Kirim <code>/unlock passphrase-kamu</code>.\n\n"
+            "<i>Pesannya langsung dihapus dari chat setelah dibaca.</i>")
+
+
+def render_doctor(python: str, problems: list, unlocked: bool, wallets: int,
+                  workers_alive: int, workers_total: int, market_age: float,
+                  proxied: int, latency_ms: float, api_calls: int,
+                  queue_depth: int) -> str:
+    workers_ok = workers_total > 0 and workers_alive == workers_total
+    age_text = ("belum ada" if market_age == float("inf")
+                else f"{int(market_age) // 60}m lalu")
+
+    lines = [
+        "<b>🩺 Doctor</b>", "",
+        "<b>Runtime</b>",
+        _kv("Python", f"<code>{html.escape(python)}</code>"),
+        _kv("Vault", f"{_dot(unlocked)} {'terbuka' if unlocked else 'TERKUNCI'}"),
+        _kv("Wallet", str(wallets)),
+        _kv("Worker", f"{_dot(workers_ok)} {workers_alive}/{workers_total} hidup"),
+        "",
+        "<b>Data</b>",
+        _kv("Market", f"{_dot(market_age < 3600, warn=market_age >= 3600)} {age_text}"),
+        _kv("Proxy", f"{_dot(proxied > 0, warn=proxied == 0)} {proxied} wallet"),
+        "",
+        "<b>Telegram</b>",
+        _kv("Latensi", f"{_dot(latency_ms < 400, warn=latency_ms >= 400)} "
+                       f"{latency_ms:.0f} ms"),
+        _kv("Call", str(api_calls)),
+        _kv("Antrian", str(queue_depth)),
+        "",
+    ]
+    if problems:
+        lines.append("<b>⚠️ Masalah config</b>")
+        lines += [f"  • {html.escape(p)}" for p in problems]
+    else:
+        lines.append("✅ Config lengkap")
+
+    if proxied == 0:
+        lines.append("")
+        lines.append("<i>Tanpa proxy, semua wallet keluar lewat IP VPS yang sama "
+                     "dan terlihat sebagai satu operator.</i>")
+    return "\n".join(lines)
+
+
+def render_wallet_list(wallets: list[dict], status: dict) -> str:
+    if not wallets:
+        return ("<b>👛 Wallets</b>\n\nBelum ada wallet.\n\n"
+                "<i>Tekan ➕ untuk membuat atau mengimpor.</i>")
+
+    lines = [f"<b>👛 Wallets</b> · {len(wallets)} akun", ""]
+    for wallet in wallets:
+        state = (status.get(wallet["id"]) or {})
+        vitals = state.get("state") or {}
+        mark = "⏸" if state.get("paused") else "▶️"
+        lines.append(f"{mark} <b>{wallet['id']}</b> · "
+                     f"{html.escape(str(wallet.get('nickname', '')))}")
+        if vitals:
+            lines.append(f"   Lv{vitals.get('level', '?')} · "
+                         f"{vitals.get('gold', 0):,}g · "
+                         f"⚡{vitals.get('energy', '?')} · "
+                         f"📍{html.escape(str(vitals.get('location', '?')))}")
+        lines.append(f"   <code>{html.escape(wallet['public_key'][:24])}…</code> · "
+                     f"proxy {wallet.get('proxy', 'none')}")
+    return "\n".join(lines)
+
+
+def render_created(created: list[dict]) -> str:
+    listing = "\n".join(
+        f"<code>{html.escape(w['public_key'])}</code>\n"
+        f"  {w['id']} · {html.escape(str(w['nickname']))}" for w in created)
+    return (f"<b>✅ {len(created)} wallet dibuat</b>\n\n{listing}\n\n"
+            f"<i>Kunci privat ada di vault terenkripsi dan tidak akan pernah "
+            f"ditampilkan di sini. Onboarding in-game jalan otomatis.</i>")
 
 
 def render_why(status: dict) -> str:
