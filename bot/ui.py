@@ -18,7 +18,8 @@ def main_menu() -> str:
         [("📊 Status", "nav:status"), ("💰 Profit", "nav:profit")],
         [("🏪 Market", "nav:market"), ("⚗️ Ekonomi", "nav:economy")],
         [("⚔️ Combat", "nav:combat"), ("🎯 Task", "nav:tasks")],
-        [("👛 Wallets", "wallet:list"), ("🗺 Peta", "nav:map")],
+        [("🎒 Inventory", "nav:inventory"), ("🗺 Peta", "nav:map")],
+        [("👛 Wallets", "wallet:list"), ("🔨 Crafting", "nav:crafting")],
         [("⚙️ Kontrol", "nav:control"), ("🔐 Vault", "nav:vault")],
         [("🔄 Refresh", "nav:status")],
     ])
@@ -521,6 +522,112 @@ def render_tasks(status) -> str:
     if status.can_claim:
         lines.append("\n✅ Siap diklaim — bot mengambilnya di siklus berikutnya.")
     return "\n".join(lines)
+
+
+EQUIP_SLOTS = ("head", "chest", "gauntlets", "greaves", "boots",
+               "two_hand_weapon", "right_weapon", "left_weapon")
+
+
+def render_inventory(fleet_state: dict) -> str:
+    """Slots, chests waiting to be opened, and which gear slots are still bare."""
+    wallets = fleet_state.get("wallets", {})
+    if not wallets:
+        return "Belum ada data inventory."
+
+    lines = ["<b>🎒 Inventory & equipment</b>", ""]
+    for wallet_id, status in sorted(wallets.items()):
+        state = status.get("state") or {}
+        holdings = status.get("holdings") or {}
+        equipment = status.get("equipment") or {}
+
+        used, maximum = state.get("slots_used"), state.get("slots_max")
+        lines.append(f"<b>{wallet_id}</b> {html.escape(str(status.get('nickname', '')))}")
+        if maximum:
+            lines.append(f"  Slot {used}/{maximum}"
+                         + ("  ⚠️ hampir penuh" if maximum - used <= 2 else ""))
+
+        chests = state.get("chests") or 0
+        if chests:
+            lines.append(f"  📦 {chests} peti belum dibuka — bot membukanya otomatis")
+
+        worn = [s for s in EQUIP_SLOTS if isinstance(equipment.get(s), dict)
+                and equipment.get(s)]
+        empty = [s for s in EQUIP_SLOTS if s not in worn]
+        if worn:
+            for slot in worn:
+                template = (equipment[slot] or {}).get("templateId", "?")
+                lines.append(f"  ✅ {slot}: {html.escape(str(template))}")
+        if empty:
+            lines.append(f"  ⬜ kosong: {', '.join(empty)}")
+
+        if holdings:
+            top = sorted(holdings.items(), key=lambda kv: -kv[1])[:8]
+            lines.append("  " + " · ".join(
+                f"{html.escape(k)}×{v}" for k, v in top))
+        lines.append("")
+
+    lines.append("<i>Peti dibuka otomatis, dan gear dipasang otomatis ke slot yang "
+                 "kosong. Penggantian gear yang sudah terpakai butuh lepas dulu, "
+                 "jadi hanya dilakukan kalau tier-nya jelas lebih tinggi.</i>")
+    return "\n".join(lines)
+
+
+def render_crafting(fleet_state: dict, holdings: dict, gold: int, grade: int,
+                    professions: dict, location: str) -> str:
+    """What could be crafted here, and what each blocked recipe is short of."""
+    from slcw import crafting
+
+    shops = crafting.workshops_at(location)
+    lines = [f"<b>🔨 Crafting</b> · {html.escape(world_name(location))}", ""]
+
+    if not shops:
+        cities = sorted({w.city_id for w in crafting.WORKSHOPS.values()})
+        lines.append("Tidak ada bengkel crafting di lokasi ini.")
+        lines.append("")
+        for workshop in crafting.WORKSHOPS.values():
+            lines.append(f"  {workshop.id} · {workshop.city_id} · "
+                         f"{workshop.profession} ({len(workshop.items)} resep)")
+        lines.append("")
+        lines.append("<i>Equipment hasil crafting tidak diperdagangkan di market, "
+                     "jadi engine tidak bisa mengukur nilainya dan tidak pernah "
+                     "memilihnya sendiri. Ini keputusan kamu.</i>")
+        return "\n".join(lines)
+
+    ready = crafting.craftable(location, holdings, gold, grade, professions)
+    if ready:
+        lines.append(f"<b>✅ Bisa dibuat sekarang ({len(ready)})</b>")
+        for plan in ready[:10]:
+            inputs = ", ".join(f"{q}× {html.escape(i)}"
+                               for i, q in plan.ingredients().items())
+            lines.append(f"  {html.escape(plan.recipe_id)} ×{plan.quantity}")
+            lines.append(f"     {inputs} + {plan.gold_cost:,}g · "
+                         f"{plan.duration_seconds // 60}m")
+        lines.append("")
+
+    for workshop in shops:
+        blocked = []
+        for recipe_id in workshop.items:
+            if any(p.recipe_id == recipe_id for p in ready):
+                continue
+            plan = crafting.CraftPlan(workshop, recipe_id, 1)
+            reasons = plan.blockers(holdings, gold, grade, professions)
+            if reasons:
+                blocked.append((recipe_id, reasons))
+        if blocked:
+            lines.append(f"<b>{workshop.id}</b> · {workshop.profession}")
+            for recipe_id, reasons in blocked[:5]:
+                lines.append(f"  ❌ {html.escape(recipe_id)}: "
+                             f"{html.escape('; '.join(reasons[:2]))}")
+            lines.append("")
+
+    lines.append("<i>Equipment tidak punya bid di market, jadi engine tidak "
+                 "mengukurnya dan tidak crafting sendiri.</i>")
+    return "\n".join(lines)
+
+
+def world_name(location_id: str) -> str:
+    from slcw import world
+    return world.name_of(location_id)
 
 
 def render_combat(memory) -> str:

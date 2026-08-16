@@ -6,7 +6,7 @@
 
 [![tests](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml/badge.svg)](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml)
 [![python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab?logo=python&logoColor=white)](https://www.python.org/)
-[![tests](https://img.shields.io/badge/tests-347%20passing-4c1)](tests/)
+[![tests](https://img.shields.io/badge/tests-383%20passing-4c1)](tests/)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 Every action is priced in gold-per-hour before it runs.
@@ -80,8 +80,9 @@ flooding the chat with stale snapshots.
 │  📊 Status      💰 Profit   │        ├── 🔗 Rantai profit
 │  🏪 Market      ⚗️ Ekonomi  │        ├── 🌾 Gathering
 │  ⚔️ Combat      🎯 Task     │        ├── ⚗️ Refining
-│  👛 Wallets     🗺 Peta     │        ├── ⚡ Energi
-│  ⚙️ Kontrol     🔐 Vault    │        └── 🗺 Peta
+│  🎒 Inventory   🗺 Peta     │        ├── ⚡ Energi
+│  👛 Wallets     🔨 Crafting │        └── 🗺 Peta
+│  ⚙️ Kontrol     🔐 Vault    │
 └─────────────────────────────┘
 ```
 
@@ -96,6 +97,8 @@ flooding the chat with stale snapshots.
 | **⚡ Energi** | free refill quota per wallet — three a day, easy to leave unused |
 | **🗺 Peta** | where each wallet stands and how far every useful destination is |
 | **🎯 Task** | hunt-ladder progress, reward, and why it may be locked |
+| **🎒 Inventory** | slots, unopened chests, which gear slots are still bare |
+| **🔨 Crafting** | every recipe you could start here, and what the rest are short of |
 | **⚔️ Combat** | the learned per-monster model — which zones it blocks and attacks |
 | **👛 Wallets** | per-wallet detail, pause/resume, force cycle, **🧠 Kenapa?** |
 | **⚙️ Kontrol** | resume, pause, force cycle, dry-run toggle, logs, doctor |
@@ -133,6 +136,8 @@ and takes the best.
 | `spendAttributePoints` | **∞** — free progression |
 | `refillEnergyFree` | **∞** — three a day, free, and energy gates everything |
 | `claimTaskReward`, `acceptTask` | **∞** — free gold from the hunt ladder |
+| `openChests` | **∞** — free loot sitting in an inventory slot |
+| `equipItem` | **∞** — gear in an empty slot is pure gain |
 | `startTravel` | the destination's best action, amortised over travel time |
 | `startRefining` | output × live best bid − gold cost |
 | `purchaseCraftingItem` | the refining run it unlocks − its own cost |
@@ -357,6 +362,8 @@ daemon.py                 fleet + control plane in one process
 │   ├── refining.py       workshops, recipes, catalyst shops
 │   ├── world.py          map, distances, travel times
 │   ├── tasks.py          hunt-task ladder
+│   ├── inventory.py      slots, chests, equipment decisions
+│   ├── crafting.py       154 equipment recipes across 3 workshops
 │   ├── combat.py         learned per-monster zone strategy
 │   ├── economy.py        expected-value scoring
 │   ├── orchestrator.py   choose, execute, record why

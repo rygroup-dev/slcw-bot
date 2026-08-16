@@ -14,7 +14,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 
-from . import ledger, market as market_mod, scheduler, tasks
+from . import inventory as inv_mod, ledger, market as market_mod, scheduler, tasks
 from .api import GameApi
 from .auth import AuthError, SessionManager
 from .config import DATA, Config
@@ -42,6 +42,7 @@ class WalletStatus:
     rationale: list = field(default_factory=list)
     state: dict = field(default_factory=dict)
     holdings: dict = field(default_factory=dict)
+    equipment: dict = field(default_factory=dict)
     logins: int = 0
     refreshes: int = 0
 
@@ -189,11 +190,13 @@ class Fleet:
             state = api.get_player(session)
             self.refresh_market(api, session)
 
-            # Refining decisions need to know what the account is actually holding.
+            # Refining, chest opening and equipment all need the inventory, so
+            # it is fetched once and shared rather than read three times.
             try:
-                holdings = api.get_holdings(session)
+                inventory = inv_mod.parse_inventory(api.get_inventory(session))
+                holdings = inventory.holdings()
             except (TransportError, ApiError):
-                holdings = {}
+                inventory, holdings = None, {}
 
             # Hunt tasks only exist from level 10, so below that the call is
             # a guaranteed round trip for nothing.
@@ -209,7 +212,8 @@ class Fleet:
 
             orchestrator = Orchestrator(config=self.config, api=api, rng=rng)
             decision = orchestrator.decide_and_act(
-                wallet, session, state, self.market, holdings, task_status)
+                wallet, session, state, self.market, holdings, task_status,
+                inventory)
 
             status.last_run_ts = int(time.time())
             status.last_action = decision.action
@@ -229,6 +233,12 @@ class Fleet:
                 "free_refills_left": state.free_refills_left(),
             }
             status.holdings = holdings
+            if inventory is not None:
+                status.state["slots_used"] = inventory.used_slots
+                status.state["slots_max"] = inventory.max_slots
+                status.state["chests"] = sum(c.quantity for c in inventory.chests())
+            status.state["professions"] = state.professions or {}
+            status.equipment = state.equipment or {}
 
             if decision.error:
                 self._register_error(status, decision.error)

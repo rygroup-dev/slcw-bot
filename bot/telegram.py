@@ -293,6 +293,11 @@ class TelegramBot:
         elif view == "tasks":
             self.edit(chat_id, message_id,
                       ui.render_tasks(self.fleet.last_task_status), ui.main_menu())
+        elif view == "inventory":
+            self.edit(chat_id, message_id,
+                      ui.render_inventory(self.fleet_state()), ui.main_menu())
+        elif view == "crafting":
+            self.edit(chat_id, message_id, self.crafting_text(), ui.main_menu())
         elif view == "combat":
             self.edit(chat_id, message_id, ui.render_combat(self.combat_memory()),
                       ui.main_menu())
@@ -352,6 +357,19 @@ class TelegramBot:
                     gold=state.get("gold", 0),
                     holdings=status.holdings or {},
                     config=self.config)
+        return "Belum ada state wallet. Tunggu siklus pertama selesai."
+
+    def crafting_text(self) -> str:
+        for status in self.fleet.status.values():
+            state = status.state or {}
+            if state:
+                return ui.render_crafting(
+                    self.fleet_state(),
+                    holdings=status.holdings or {},
+                    gold=state.get("gold", 0),
+                    grade=state.get("grade", 1),
+                    professions=state.get("professions") or {},
+                    location=state.get("location", ""))
         return "Belum ada state wallet. Tunggu siklus pertama selesai."
 
     def profit_text(self) -> str:

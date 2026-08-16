@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass, field, replace
 
 from . import economy as econ
-from . import farming, refining, world
+from . import farming, inventory as inv_mod, refining, world
 from .combat import CombatMemory, select_monster
 from .config import Config
 from .guardrails import GuardrailViolation
@@ -36,6 +36,10 @@ BATTLE_MIN_HEALTH_RATIO = 0.45
 # Take a free energy refill only once the bar has drained this far, so a daily
 # use is never spent restoring a handful of points.
 ENERGY_REFILL_RATIO = 0.35
+
+# The server accepts a stack, but a smaller batch keeps rewards legible
+# in the ledger and bounded if a chest type turns out to be unusual.
+MAX_CHESTS_PER_OPEN = 5
 
 
 @dataclass
@@ -87,12 +91,14 @@ class Orchestrator:
     rng: random.Random = field(default_factory=random.Random)
 
     def decide_and_act(self, wallet: dict, session, state, market=None,
-                       holdings=None, task_status=None) -> Decision:
+                       holdings=None, task_status=None,
+                       inventory=None) -> Decision:
         decision = Decision(wallet_id=wallet["id"], dry_run=self.config.dry_run)
 
         try:
             candidates = self.build_candidates(
-                state, market, holdings, task_status=task_status)
+                state, market, holdings, task_status=task_status,
+                inventory=inventory)
             decision.considered = candidates
             if not candidates:
                 decision.action = "idle"
@@ -123,7 +129,8 @@ class Orchestrator:
 
     # --- candidate generation -------------------------------------------
     def build_candidates(self, state, market=None, holdings=None,
-                         include_travel: bool = True, task_status=None) -> list:
+                         include_travel: bool = True, task_status=None,
+                         inventory=None) -> list:
         # Free value first: an expired activity is reward already earned, and
         # unclaimed level rewards cost nothing.
         if state.activity is not None and state.activity.is_expired:
@@ -151,6 +158,24 @@ class Orchestrator:
         if (state.free_refills_left() > 0
                 and state.energy <= state.max_energy * ENERGY_REFILL_RATIO):
             return [econ.energy_refill_candidate(state)]
+
+        # Chests are free loot sitting in a slot, and gear in an empty slot is
+        # pure gain. Both cost nothing and neither can be undone badly.
+        if inventory is not None:
+            chests = inventory.chests()
+            if chests:
+                chest = chests[0]
+                return [econ.free_candidate(
+                    "openChests",
+                    {"chestTemplateId": chest.template_id,
+                     "quantity": min(chest.quantity, MAX_CHESTS_PER_OPEN)},
+                    f"{chest.quantity}× {chest.template_id} unopened")]
+
+            equip = inv_mod.next_equip(inventory, state.equipment)
+            if equip is not None and not equip.is_upgrade:
+                return [econ.free_candidate(
+                    "equipItem", {"instanceId": equip.instance_id},
+                    f"{equip.template_id} into empty {equip.slot} slot")]
 
         # A finished hunt task is gold sitting there; accepting the next one is free.
         if task_status is not None and task_status.eligible:
@@ -380,6 +405,12 @@ class Orchestrator:
             return self.api.accept_task(session)
         if action == "claimTaskReward":
             return self.api.claim_task_reward(session)
+        if action == "openChests":
+            return self.api.open_chests(
+                session, candidate.params["chestTemplateId"],
+                candidate.params["quantity"])
+        if action == "equipItem":
+            return self.api.equip_item(session, candidate.params["instanceId"])
         if action == "battle":
             return self.run_battle(session, candidate.params["monsterId"])
         raise GuardrailViolation(f"orchestrator has no executor for {action!r}")
