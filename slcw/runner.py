@@ -252,7 +252,19 @@ class Fleet:
             # follows the server, not our own cadence.
             fresh = api.get_player(session)
             self._notify_progress(status, state, fresh, decision)
-            return scheduler.next_wake_seconds(self.config, wallet, fresh, rng=rng)
+
+            # If the wallet is free again and something worthwhile is already
+            # available, come back on a human reaction delay rather than the
+            # idle poll — otherwise a one-minute battle is followed by a
+            # quarter-hour wait while the energy bar sits full.
+            action_ready = False
+            if not fresh.is_busy:
+                action_ready = bool(orchestrator.build_candidates(
+                    fresh, self.market, holdings, task_status=task_status,
+                    inventory=inventory))
+
+            return scheduler.next_wake_seconds(
+                self.config, wallet, fresh, rng=rng, action_ready=action_ready)
 
         except (AuthError, TransportError, ApiError) as exc:
             self.sessions.invalidate(wallet["id"])

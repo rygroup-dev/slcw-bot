@@ -139,16 +139,27 @@ def battle_candidate(monster_id: str, economy: Economy, drop_values: dict | None
 def farming_candidates(resource, state, market, config) -> list[ActionScore]:
     """Value both funding modes for one gathered resource.
 
-    A resource with no market bid is worth nothing we can measure, so it is scored
-    at zero rather than at an invented price — the candidate then loses to anything
-    with real value instead of quietly winning on optimism.
+    Raw materials are not traded, so their worth is taken from the refined good
+    they become, net of the catalyst and refining gold. When neither the raw
+    material nor any refined output it feeds carries a bid, the resource scores
+    zero rather than an invented price, and the candidate loses to anything with
+    real value instead of quietly winning on optimism.
     """
-    from . import farming
+    from . import farming, refining
 
-    bid = (market.best_bid(resource.item_id) or 0.0) if market is not None else 0.0
     stale = market is None or not market.is_fresh(config.market_ttl_seconds)
+
+    # A raw material is almost never traded directly; what it is worth is the
+    # refined good it becomes. Pricing it at its own (absent) bid valued the
+    # whole gathering economy at zero.
+    bid = (market.best_bid(resource.item_id) or 0.0) if market is not None else 0.0
+    via_refining = refining.raw_material_value(
+        resource.item_id, market, getattr(state, "grade", 7))
+    bid = max(bid, via_refining)
+
     unpriced = bid <= 0
     tier_note = f"T{resource.tier} {resource.item_id}"
+    value_note = " (via refining)" if via_refining > 0 and via_refining >= bid else ""
 
     candidates = []
 
@@ -165,7 +176,7 @@ def farming_candidates(resource, state, market, config) -> list[ActionScore]:
             reason=(f"{tier_note} ×{cycles} energy-mode, "
                     f"{cost['gold']}g + {cost['energy']}en"
                     + (" — no market bid, valued at 0" if unpriced else
-                       f", sells {bid:,.0f}g each")),
+                       f", worth {bid:,.0f}g each{value_note}")),
             degraded=stale or unpriced,
         ))
 
@@ -184,7 +195,7 @@ def farming_candidates(resource, state, market, config) -> list[ActionScore]:
             duration_seconds=hours * 3600,
             reason=(f"{tier_note} ×{units} gold-mode {hours}h, {cost['gold']}g, no energy"
                     + (" — no market bid, valued at 0" if unpriced else
-                       f", sells {bid:,.0f}g each")),
+                       f", worth {bid:,.0f}g each{value_note}")),
             degraded=stale or unpriced,
         ))
 

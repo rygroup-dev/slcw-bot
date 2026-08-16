@@ -194,6 +194,43 @@ def catalyst_price(tier: int) -> int:
     return CATALYST_PRICE.get(tier, 0)
 
 
+def raw_material_value(raw_item: str, market, grade: int = 7) -> float:
+    """What one unit of a raw material is worth through the refining chain.
+
+    Raw ores, logs, fibers and skins carry no market bid, so pricing them at
+    their own bid values them at zero and gathering never looks worth doing.
+    Their real worth is the refined good they become, net of the other inputs:
+
+        value = (output_bid - catalyst_price - refine_gold) / raw_per_cycle
+
+    Returns 0.0 when the refined output has no bid either, or when the chain
+    would lose money — both are honest answers rather than optimistic ones.
+    """
+    if market is None:
+        return 0.0
+
+    best = 0.0
+    for workshop in WORKSHOPS.values():
+        for item_id in workshop.items:
+            if workshop.raw_for(item_id) != raw_item:
+                continue
+            tier = workshop.tier_of(item_id)
+            if tier > grade:
+                continue
+            bid = market.best_bid(item_id) or 0.0
+            if bid <= 0:
+                continue
+            per_cycle = raw_per_cycle(tier)
+            # Higher tiers also consume a unit of the previous tier, which this
+            # deliberately ignores: counting only the costs we are certain of
+            # keeps the estimate conservative rather than flattering.
+            net = bid - catalyst_price(tier) - GOLD_PER_CYCLE.get(tier, 0)
+            if net <= 0 or per_cycle <= 0:
+                continue
+            best = max(best, net / per_cycle)
+    return best
+
+
 def catalyst_payload(workshop: Workshop, tier: int, quantity: int) -> dict:
     """Argument shape for purchaseCraftingItem, per the frontend."""
     return {"shopId": workshop.shop_id, "tier": tier, "quantity": quantity}

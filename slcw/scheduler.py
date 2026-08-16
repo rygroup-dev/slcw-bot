@@ -66,11 +66,18 @@ def sleep_window_for(wallet: dict) -> SleepWindow:
 
 
 def next_wake_seconds(config: Config, wallet: dict, state, now: _dt.datetime | None = None,
-                      rng: random.Random | None = None) -> tuple[float, str]:
+                      rng: random.Random | None = None,
+                      action_ready: bool = False) -> tuple[float, str]:
     """Return (seconds_to_sleep, reason).
 
     Wake time is derived from the server's own activity clock when one is running,
     so the bot responds to the game rather than to the wall clock.
+
+    `action_ready` marks the case where the wallet is free and something
+    worthwhile is already available — a battle costs one energy and about a
+    minute, so a wallet sitting on 90 energy should not then wait a quarter of an
+    hour. That case gets a human reaction delay instead of the idle poll, which
+    exists for when there is genuinely nothing to do.
     """
     rng = rng or random
     now = now or _dt.datetime.now(_dt.timezone.utc)
@@ -85,5 +92,8 @@ def next_wake_seconds(config: Config, wallet: dict, state, now: _dt.datetime | N
     if state is not None and state.is_busy and state.activity is not None:
         remaining = state.activity.seconds_remaining()
         return remaining + reaction_delay(config, rng), f"{state.activity.type} in progress"
+
+    if action_ready:
+        return reaction_delay(config, rng), "action ready"
 
     return idle_delay(config, rng), "idle poll"

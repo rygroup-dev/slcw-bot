@@ -376,3 +376,58 @@ class CatalystTests(unittest.TestCase):
         cost = per_unit * 9 + refining.catalyst_price(1) + refining.GOLD_PER_CYCLE[1]
         self.assertLess(cost, 100)
         self.assertGreater(888 / cost, 10, "chain should return over 10x")
+
+
+class ChainValuationTests(unittest.TestCase):
+    """Raw materials are not traded; their worth is the refined good they feed."""
+
+    def test_raw_ore_is_valued_through_its_ingot(self):
+        # 9 ore + 1 catalyst (20g) + 5g refine -> 1 copper_ingot at 888g.
+        value = refining.raw_material_value("copper_ore", bids(copper_ingot=888))
+        self.assertAlmostEqual(value, (888 - 20 - 5) / 9, places=4)
+
+    def test_zero_when_the_refined_output_has_no_bid_either(self):
+        self.assertEqual(refining.raw_material_value("copper_ore", build_snapshot([])), 0.0)
+
+    def test_zero_when_the_chain_would_lose_money(self):
+        # A 10g ingot cannot repay a 20g catalyst plus 5g of refining.
+        self.assertEqual(refining.raw_material_value("copper_ore", bids(copper_ingot=10)), 0.0)
+
+    def test_grade_caps_which_tier_the_value_may_come_from(self):
+        market = bids(iron_ingot=100000)
+        self.assertEqual(refining.raw_material_value("iron_ore", market, grade=1), 0.0)
+        self.assertGreater(refining.raw_material_value("iron_ore", market, grade=2), 0)
+
+    def test_unknown_material_is_worthless(self):
+        self.assertEqual(refining.raw_material_value("moon_rock", bids(copper_ingot=888)), 0.0)
+
+    def test_missing_market_is_worthless(self):
+        self.assertEqual(refining.raw_material_value("copper_ore", None), 0.0)
+
+    def test_gathering_becomes_viable_once_the_chain_is_priced(self):
+        """The bug this fixes: an 11,000-gold wallet still refused to gather."""
+        from slcw.config import Config
+        from slcw.model import parse_player
+        from slcw.orchestrator import _GoldBudget
+        from slcw import farming as farm_mod
+
+        state = parse_player({
+            "level": 6, "grade": 1, "energy": 90, "maxEnergy": 100,
+            "balance": 11000, "currentHealth": 130, "currentMana": 130,
+            "attributes": {"vitality": 3, "wisdom": 3}})
+        resource = farm_mod.resources_at("farm_2")[0]          # copper_ore
+        budget = _GoldBudget(state, 10500)
+
+        blind = econ.farming_candidates(resource, budget, build_snapshot([]), Config())
+        priced = econ.farming_candidates(resource, budget, bids(copper_ingot=888), Config())
+
+        self.assertTrue(all(c.gold_equivalent == 0 for c in blind))
+        self.assertTrue(any(c.gold_equivalent > 0 for c in priced))
+        self.assertTrue(any("via refining" in c.reason for c in priced))
+
+    def test_gold_budget_passes_grade_through(self):
+        from slcw.model import parse_player
+        from slcw.orchestrator import _GoldBudget
+        state = parse_player({"grade": 3, "energy": 50,
+                              "attributes": {"vitality": 3, "wisdom": 3}})
+        self.assertEqual(_GoldBudget(state, 100).grade, 3)

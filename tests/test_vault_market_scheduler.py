@@ -228,3 +228,60 @@ class SchedulerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ActionReadyPacingTests(unittest.TestCase):
+    """A one-minute battle must not be followed by a quarter-hour wait."""
+
+    def setUp(self):
+        self.config = Config()
+        self.rng = random.Random(3)
+        self.wallet = {"sleep_anchor_hour": 3, "sleep_hours": 7}
+        self.noon = _dt.datetime(2026, 8, 16, 12, 0, tzinfo=_dt.timezone.utc)
+        self.idle = parse_player({"attributes": {"vitality": 3, "wisdom": 3},
+                                  "currentHealth": 130, "currentMana": 130,
+                                  "activity": None})
+
+    def _wake(self, action_ready):
+        return scheduler.next_wake_seconds(
+            self.config, self.wallet, self.idle, now=self.noon,
+            rng=self.rng, action_ready=action_ready)
+
+    def test_ready_wallet_returns_on_a_reaction_delay(self):
+        delay, reason = self._wake(action_ready=True)
+        self.assertEqual(reason, "action ready")
+        self.assertLessEqual(delay, self.config.reaction_max_seconds)
+        self.assertGreaterEqual(delay, self.config.reaction_min_seconds)
+
+    def test_idle_wallet_still_uses_the_slow_poll(self):
+        delay, reason = self._wake(action_ready=False)
+        self.assertEqual(reason, "idle poll")
+        self.assertGreaterEqual(delay, self.config.idle_min_seconds)
+
+    def test_ready_is_typically_much_sooner_than_idle(self):
+        ready = [self._wake(True)[0] for _ in range(200)]
+        idle = [self._wake(False)[0] for _ in range(200)]
+        self.assertLess(sum(ready) / len(ready), sum(idle) / len(idle))
+
+    def test_sleep_window_still_wins_over_a_ready_action(self):
+        inside = _dt.datetime(2026, 8, 16, 4, 0, tzinfo=_dt.timezone.utc)
+        _, reason = scheduler.next_wake_seconds(
+            self.config, self.wallet, self.idle, now=inside,
+            rng=self.rng, action_ready=True)
+        self.assertEqual(reason, "sleep window")
+
+    def test_running_activity_still_wins_over_a_ready_action(self):
+        busy = parse_player({
+            "attributes": {"vitality": 3, "wisdom": 3},
+            "currentHealth": 130, "currentMana": 130,
+            "activity": {"type": "production",
+                         "endTime": {"seconds": int(_dt.datetime.now(
+                             _dt.timezone.utc).timestamp()) + 600}}})
+        _, reason = scheduler.next_wake_seconds(
+            self.config, self.wallet, busy, now=self.noon,
+            rng=self.rng, action_ready=True)
+        self.assertIn("production", reason)
+
+    def test_ready_delays_are_still_varied(self):
+        samples = {round(self._wake(True)[0], 3) for _ in range(200)}
+        self.assertGreater(len(samples), 190, "pacing must not become a fixed interval")

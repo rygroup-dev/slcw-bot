@@ -48,6 +48,12 @@ class _GoldBudget:
     def energy(self) -> int:
         return self.state.energy
 
+    @property
+    def grade(self) -> int:
+        # Grade caps which refining tiers a raw material can reach, so it must
+        # pass through rather than fall back to a permissive default.
+        return self.state.grade
+
 
 @dataclass
 class Decision:
