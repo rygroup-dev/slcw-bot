@@ -41,6 +41,9 @@ class FakeApi:
     def spend_attribute_points(self, session, target_type, target_id, amount=1):
         return self._record("spendAttributePoints", target_id=target_id, amount=amount)
 
+    def start_travel(self, session, destination_id):
+        return self._record("startTravel", destinationId=destination_id)
+
     def start_battle(self, session, monster_id):
         self.calls.append(("startBattle", {"monsterId": monster_id}))
         return {"battleId": "battle-1"}
@@ -114,10 +117,24 @@ class PriorityTests(unittest.TestCase):
 class SelectionTests(unittest.TestCase):
     def test_city_runs_production(self):
         api = FakeApi()
-        orchestrator = make(api=api)
+        orchestrator = make(config=Config(enabled=True, dry_run=False,
+                                          auto_travel=False), api=api)
         decision = orchestrator.decide_and_act({"id": "w1"}, None, state_of())
         self.assertEqual(decision.action, "startProduction")
         self.assertEqual(api.calls[0][1]["cycles"], 1)
+
+    def test_travel_beats_production_once_repeats_are_counted(self):
+        """Arriving somewhere to fight means fighting until energy runs out.
+
+        Charging the whole walk against a single battle made travel look
+        worthless and pinned every wallet to whatever it started doing.
+        """
+        orchestrator = make()
+        candidates = orchestrator.build_candidates(state_of())
+        top = candidates[0]
+        self.assertEqual(top.action, "startTravel")
+        self.assertIn("battle", top.reason)
+        self.assertIn("×", top.reason, "the projection must show the repeat count")
 
     def test_low_health_prefers_rest_over_production(self):
         orchestrator = make()
@@ -216,7 +233,8 @@ class ErrorHandlingTests(unittest.TestCase):
             def start_production(self, session, cycles=1):
                 raise ApiError("Internal error", status_code="INTERNAL", http_status=500)
 
-        orchestrator = make(api=Failing())
+        orchestrator = make(config=Config(enabled=True, dry_run=False,
+                                          auto_travel=False), api=Failing())
         decision = orchestrator.decide_and_act({"id": "w1"}, None, state_of())
         self.assertIn("INTERNAL", decision.error)
 

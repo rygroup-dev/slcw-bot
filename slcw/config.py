@@ -72,7 +72,10 @@ class Config:
     rest_mp_ratio: float = field(default_factory=lambda: _float("SLCW_REST_MP_RATIO", 0.25))
     battle_max_turns: int = field(default_factory=lambda: _int("SLCW_BATTLE_MAX_TURNS", 12))
     market_ttl_seconds: int = field(default_factory=lambda: _int("SLCW_MARKET_TTL_SECONDS", 1800))
-    # Gold-mode farming runs 1-8 hours and spends no energy.
+    # Gold-mode farming runs 1-8 hours and spends no energy. It also locks the
+    # wallet for that whole time — no levelling, no chests, no task claims — and
+    # the gold-per-hour score cannot see that cost, so it is switchable.
+    farming_gold: bool = field(default_factory=lambda: _bool("SLCW_FARMING_GOLD", True))
     farming_gold_hours: int = field(default_factory=lambda: _int("SLCW_FARMING_GOLD_HOURS", 8))
     # Keep this much gold in reserve; gold-funded actions may not dip below it.
     gold_reserve: int = field(default_factory=lambda: _int("SLCW_GOLD_RESERVE", 500))

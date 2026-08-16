@@ -6,7 +6,7 @@
 
 [![tests](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml/badge.svg)](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml)
 [![python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab?logo=python&logoColor=white)](https://www.python.org/)
-[![tests](https://img.shields.io/badge/tests-536%20passing-4c1)](tests/)
+[![tests](https://img.shields.io/badge/tests-543%20passing-4c1)](tests/)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 Every action is priced in gold-per-hour before it runs.
@@ -411,6 +411,8 @@ See [`.env.example`](.env.example) for the annotated full list.
 | `SLCW_REST_HP_RATIO` | `0.55` | rest below this fraction of health |
 | `SLCW_GOLD_RESERVE` | `500` | gold-funded actions never spend below this |
 | `SLCW_AUTO_TRAVEL` | `true` | let the engine relocate along the production chain |
+| `SLCW_FARMING_GOLD` | `true` | allow gold-mode gathering, which locks a wallet for hours |
+| `SLCW_FARMING_GOLD_HOURS` | `8` | how long a gold-mode run lasts (1-8) |
 | `SLCW_TRAVEL_MARGIN` | `1.35` | how much better a destination must be before moving |
 | `SLCW_RICH_DROP_GOLD` | `2000` | drop value that triggers an alert |
 

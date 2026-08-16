@@ -180,8 +180,10 @@ def farming_candidates(resource, state, market, config) -> list[ActionScore]:
             degraded=stale or unpriced,
         ))
 
-    # Gold mode spends no energy at all, so it can run whenever gold allows.
-    for hours in (config.farming_gold_hours,):
+    # Gold mode spends no energy at all, so it can run whenever gold allows —
+    # but it also locks the wallet for its whole duration, which the score
+    # cannot express, so the operator decides whether to allow it.
+    for hours in ((config.farming_gold_hours,) if config.farming_gold else ()):
         cost = farming.gold_mode_cost(resource.tier, hours)
         if cost["gold"] > state.gold:
             continue

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import html
 import json
+import dataclasses
 import queue
 import subprocess
 import sys
@@ -319,13 +320,13 @@ class TelegramBot:
         render = {
             "profit": lambda: (self.profit_text(), ui.main_menu()),
             "market": lambda: (ui.render_market(self.fleet.market), ui.main_menu()),
-            "economy": lambda: (ui.ECONOMY_INTRO, ui.economy_menu()),
+            "economy": lambda: (ui.ECONOMY_INTRO, self.economy_markup()),
             "chain": lambda: (ui.render_chain(self.fleet.market, self.config),
-                              ui.economy_menu()),
-            "farming": lambda: (self.farming_text(), ui.economy_menu()),
-            "refining": lambda: (self.refining_text(), ui.economy_menu()),
-            "energy": lambda: (ui.render_energy(self.fleet_state()), ui.economy_menu()),
-            "map": lambda: (ui.render_map(self.fleet_state()), ui.economy_menu()),
+                              self.economy_markup()),
+            "farming": lambda: (self.farming_text(), self.economy_markup()),
+            "refining": lambda: (self.refining_text(), self.economy_markup()),
+            "energy": lambda: (ui.render_energy(self.fleet_state()), self.economy_markup()),
+            "map": lambda: (ui.render_map(self.fleet_state()), self.economy_markup()),
             "combat": lambda: (ui.render_combat(self.combat_memory()), ui.main_menu()),
             "tasks": lambda: (ui.render_tasks(self.fleet.last_task_status),
                               ui.main_menu()),
@@ -342,6 +343,11 @@ class TelegramBot:
             return
         text, markup = render()
         self.edit(chat_id, message_id, text, markup)
+
+    def economy_markup(self) -> str:
+        return ui.economy_menu(self.config.farming_gold,
+                               self.config.farming_gold_hours,
+                               self.config.auto_travel)
 
     def control_markup(self) -> str:
         paused = sum(1 for s in self.fleet.status.values() if s.paused)
@@ -425,8 +431,29 @@ class TelegramBot:
             self.fleet.pause_all("manual")
         elif action == "force":
             self.fleet.force_cycle()
+        elif action == "toggle_goldfarm":
+            self.config = dataclasses.replace(
+                self.config, farming_gold=not self.config.farming_gold)
+            self.fleet.config = self.config
+            return self.edit(chat_id, message_id, ui.ECONOMY_INTRO,
+                             self.economy_markup())
+        elif action == "toggle_travel":
+            self.config = dataclasses.replace(
+                self.config, auto_travel=not self.config.auto_travel)
+            self.fleet.config = self.config
+            return self.edit(chat_id, message_id, ui.ECONOMY_INTRO,
+                             self.economy_markup())
+        elif action == "goldhours":
+            return self.edit(chat_id, message_id, ui.GOLD_HOURS_HELP,
+                             ui.gold_hours_menu(self.config.farming_gold_hours))
+        elif action == "setgoldhours":
+            hours = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 8
+            self.config = dataclasses.replace(
+                self.config, farming_gold_hours=max(1, min(8, hours)))
+            self.fleet.config = self.config
+            return self.edit(chat_id, message_id, ui.GOLD_HOURS_HELP,
+                             ui.gold_hours_menu(self.config.farming_gold_hours))
         elif action == "toggle_dry":
-            import dataclasses
             self.config = dataclasses.replace(self.config,
                                               dry_run=not self.config.dry_run)
             self.fleet.config = self.config

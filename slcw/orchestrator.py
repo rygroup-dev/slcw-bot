@@ -33,6 +33,11 @@ ENERGY_REFILL_RATIO = 0.35
 # in the ledger and bounded if a chest type turns out to be unusual.
 MAX_CHESTS_PER_OPEN = 5
 
+# Ceiling on how far ahead a travel decision projects. A wallet arriving to
+# fight will repeat until its energy runs out, but a longer horizon is a less
+# reliable one, so the estimate is bounded.
+MAX_PROJECTED_REPEATS = 40
+
 
 @dataclass
 class _GoldBudget:
@@ -288,14 +293,34 @@ class Orchestrator:
 
         return econ.rank(profitable)
 
+    def _repeats_at(self, target, state) -> int:
+        """How many times the wallet would repeat an action after arriving.
+
+        Energy is the only budget that limits repetition in practice: a battle
+        costs one point and can run until the bar empties, while gold-mode
+        farming and refining each consume their whole budget in a single call.
+        The projection is capped because a longer horizon is a less reliable
+        one — prices move and the wallet may be interrupted.
+        """
+        if target.energy_cost <= 0:
+            return 1
+        affordable = int(state.energy) // int(target.energy_cost)
+        return max(1, min(affordable, MAX_PROJECTED_REPEATS))
+
     def _travel_candidate(self, state, market, holdings, local_best: float):
         """Consider moving to wherever the next action is worth more.
 
         Gathering happens at farm zones and refining in city workshops, so a
         wallet that never moves is limited to whatever its current location
-        offers. Each destination is valued by its best action amortised over the
-        travel time it costs to get there, which is what stops the engine
-        crossing the map for a marginal gain.
+        offers.
+
+        A destination is valued by what the wallet would actually do there,
+        which is not one action. Arriving somewhere to fight means fighting
+        until the energy runs out, so the trip is amortised over the whole stay.
+        Charging a 22-minute walk against a single 45-second battle made travel
+        look worthless and left every wallet stuck in whatever it happened to
+        start doing — gold-rich ones farming forever with no XP, gold-poor ones
+        battling forever with no gold.
         """
         best = None
         for destination in world.economic_locations():
@@ -313,32 +338,37 @@ class Orchestrator:
                 continue
 
             target = remote[0]
-            total_hours = (seconds + target.duration_seconds) / 3600.0
+            repeats = self._repeats_at(target, state)
+            stay_seconds = target.duration_seconds * repeats
+            total_hours = (seconds + stay_seconds) / 3600.0
             if total_hours <= 0:
                 continue
-            amortised = (target.gold_equivalent - target.gold_cost) / total_hours
+            net = (target.gold_equivalent - target.gold_cost) * repeats
+            amortised = net / total_hours
 
             if best is None or amortised > best[0]:
-                best = (amortised, destination, target, seconds)
+                best = (amortised, destination, target, seconds, repeats)
 
         if best is None:
             return None
 
-        amortised, destination, target, seconds = best
+        amortised, destination, target, seconds, repeats = best
         # Only move when the payoff clearly beats staying put; travel time is
         # dead time and a marginal gain does not justify it.
         if amortised <= local_best * self.config.travel_margin:
             return None
 
+        repeat_note = f" ×{repeats}" if repeats > 1 else ""
         return econ.ActionScore(
             action="startTravel",
             params={"destinationId": destination},
-            gold_equivalent=target.gold_equivalent - target.gold_cost,
+            gold_equivalent=(target.gold_equivalent - target.gold_cost) * repeats,
             energy_cost=0,
             duration_seconds=seconds,
             score=amortised,
             reason=(f"travel {int(seconds) // 60}m to {world.name_of(destination)} "
-                    f"for {target.action} ({amortised:,.0f} g/h after travel)"),
+                    f"for {target.action}{repeat_note} "
+                    f"({amortised:,.0f} g/h after travel)"),
             degraded=target.degraded,
         )
 

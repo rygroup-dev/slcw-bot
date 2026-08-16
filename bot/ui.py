@@ -44,13 +44,32 @@ def status_menu(page: int = 1, pages: int = 1) -> str:
     return keyboard(rows)
 
 
-def economy_menu() -> str:
+def economy_menu(gold_farming: bool = True, gold_hours: int = 8,
+                 auto_travel: bool = True) -> str:
+    gold_label = (f"🟢 Gold-mode: ON ({gold_hours}j)" if gold_farming
+                  else "🔴 Gold-mode: OFF")
+    travel_label = "🟢 Auto-travel: ON" if auto_travel else "🔴 Auto-travel: OFF"
     return keyboard([
         [("🔗 Rantai profit", "nav:chain")],
         [("🌾 Gathering", "nav:farming"), ("⚗️ Refining", "nav:refining")],
         [("⚡ Energi", "nav:energy"), ("🗺 Peta", "nav:map")],
+        [(gold_label, "ctl:toggle_goldfarm")],
+        [("⏱ Durasi gold-mode", "ctl:goldhours")],
+        [(travel_label, "ctl:toggle_travel")],
         back_row(),
     ])
+
+
+def gold_hours_menu(current: int) -> str:
+    """How long a gold-mode run locks the wallet."""
+    rows = []
+    for start in (1, 4):
+        rows.append([((f"✅ {h}j" if h == current else f"{h}j"),
+                      f"ctl:setgoldhours:{h}") for h in range(start, start + 3)])
+    rows.append([(("✅ 7j" if current == 7 else "7j"), "ctl:setgoldhours:7"),
+                 (("✅ 8j" if current == 8 else "8j"), "ctl:setgoldhours:8")])
+    rows.append([("⬅️ Ekonomi", "nav:economy")])
+    return keyboard(rows)
 
 
 def back_row(target: str = "nav:main") -> list[tuple[str, str]]:
@@ -1019,6 +1038,17 @@ def render_send_results(results: list) -> str:
         lines.append("<i>Yang gagal tidak terkirim sama sekali — aman diulang "
                      "tanpa risiko dobel.</i>")
     return "\n".join(lines)
+
+
+GOLD_HOURS_HELP = (
+    "<b>⏱ Durasi gold-mode</b>\n\n"
+    "Gathering mode-gold tidak memakai energi sama sekali, tapi <b>mengunci "
+    "wallet selama durasi itu</b> — tidak bisa naik level, buka peti, atau "
+    "klaim task sampai selesai.\n\n"
+    "Biaya per jam: <code>round(j/8×1500) + 60j×3^(tier−1)</code> gold.\n\n"
+    "<i>Durasi pendek = lebih lincah tapi lebih sering diputuskan. Durasi "
+    "panjang = hasil terbesar per perjalanan, tapi wallet hilang dari "
+    "peredaran lebih lama.</i>")
 
 
 MANUAL_AMOUNT_HELP = (
