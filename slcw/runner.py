@@ -41,6 +41,7 @@ class WalletStatus:
     next_wake_reason: str = ""
     rationale: list = field(default_factory=list)
     state: dict = field(default_factory=dict)
+    holdings: dict = field(default_factory=dict)
     logins: int = 0
     refreshes: int = 0
 
@@ -186,8 +187,15 @@ class Fleet:
             state = api.get_player(session)
             self.refresh_market(api, session)
 
+            # Refining decisions need to know what the account is actually holding.
+            try:
+                holdings = api.get_holdings(session)
+            except (TransportError, ApiError):
+                holdings = {}
+
             orchestrator = Orchestrator(config=self.config, api=api, rng=rng)
-            decision = orchestrator.decide_and_act(wallet, session, state, self.market)
+            decision = orchestrator.decide_and_act(
+                wallet, session, state, self.market, holdings)
 
             status.last_run_ts = int(time.time())
             status.last_action = decision.action
@@ -204,7 +212,9 @@ class Fleet:
                 "activity": state.activity.type if state.activity else "idle",
                 "activity_remaining_s": (
                     state.activity.seconds_remaining() if state.activity else 0),
+                "free_refills_left": state.free_refills_left(),
             }
+            status.holdings = holdings
 
             if decision.error:
                 self._register_error(status, decision.error)

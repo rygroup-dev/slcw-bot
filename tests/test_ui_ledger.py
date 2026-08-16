@@ -26,6 +26,7 @@ class KeyboardTests(unittest.TestCase):
         from slcw.keys import Candidate
         markups = [
             ui.main_menu(),
+            ui.economy_menu(),
             ui.control_menu(0, 3, True),
             ui.wallet_list([{"id": "wallet-01", "nickname": "n"}], {}),
             ui.wallet_detail("wallet-01", False),
@@ -157,6 +158,58 @@ class RenderTests(unittest.TestCase):
         text = ui.render_combat(memory)
         self.assertIn("spider", text)
         self.assertIn("torso", text)
+
+    def test_chain_view_shows_every_workshop_and_its_margin(self):
+        from slcw import refining
+        market = build_snapshot([{"status": "open", "type": "buy",
+                                  "templateId": "copper_ingot", "price": 888,
+                                  "quantity": 999, "filled": 0}])
+        text = ui.render_chain(market, Config())
+        for workshop in refining.WORKSHOPS:
+            self.assertIn(workshop, text)
+        self.assertIn("copper_ingot", text)
+        # Every cost in the chain must be shown, not just the payoff.
+        self.assertIn("copper_ore", text)
+        self.assertIn("smelting_flux_1", text)
+        self.assertIn("modal", text)
+        # 9 ore (~37g) + catalyst (20g) + refine (5g) = 62g against an 888 bid.
+        self.assertIn("62g", text)
+        self.assertIn("+826g", text)
+        self.assertIn("🟢", text)
+
+    def test_chain_view_flags_unpriced_outputs(self):
+        text = ui.render_chain(build_snapshot([]), Config())
+        self.assertIn("belum ada bid", text)
+
+    def test_chain_view_fits_a_telegram_message(self):
+        self.assertLess(len(ui.render_chain(build_snapshot([]), Config())), 4000)
+
+    def test_refining_view_reports_shortfalls(self):
+        text = ui.render_refining(build_snapshot([]), level=6, grade=1, gold=100,
+                                  holdings={}, config=Config())
+        self.assertIn("kurang", text)
+        self.assertIn("copper_ore", text)
+
+    def test_refining_view_shows_a_feasible_run(self):
+        market = build_snapshot([{"status": "open", "type": "buy",
+                                  "templateId": "copper_ingot", "price": 888,
+                                  "quantity": 999, "filled": 0}])
+        text = ui.render_refining(
+            market, level=6, grade=1, gold=5000,
+            holdings={"copper_ore": 90, "smelting_flux_1": 10}, config=Config())
+        self.assertIn("✅", text)
+        self.assertIn("copper_ingot", text)
+
+    def test_energy_view_shows_remaining_refills(self):
+        state = {"wallets": {"wallet-01": {
+            "nickname": "n", "state": {"energy": 20, "max_energy": 100,
+                                       "free_refills_left": 2}}}}
+        text = ui.render_energy(state)
+        self.assertIn("2/3", text)
+        self.assertIn("🟢🟢⚪", text)
+
+    def test_energy_view_handles_missing_data(self):
+        self.assertIn("Belum ada", ui.render_energy({"wallets": {}}))
 
     def test_combat_view_handles_empty_memory(self):
         from slcw.combat import CombatMemory

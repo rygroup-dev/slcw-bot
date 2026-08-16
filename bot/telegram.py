@@ -269,8 +269,24 @@ class TelegramBot:
             self.edit(chat_id, message_id, self.profit_text(), ui.main_menu())
         elif view == "market":
             self.edit(chat_id, message_id, ui.render_market(self.fleet.market), ui.main_menu())
+        elif view == "economy":
+            self.edit(chat_id, message_id,
+                      "<b>⚗️ Ekonomi</b>\n\n"
+                      "Bahan mentah tidak punya bid sama sekali; yang laku hanya "
+                      "barang olahan. Rantai profit menunjukkan di mana nilainya "
+                      "muncul dan berapa ongkos tiap mata rantainya.",
+                      ui.economy_menu())
+        elif view == "chain":
+            self.edit(chat_id, message_id,
+                      ui.render_chain(self.fleet.market, self.config),
+                      ui.economy_menu())
         elif view == "farming":
-            self.edit(chat_id, message_id, self.farming_text(), ui.main_menu())
+            self.edit(chat_id, message_id, self.farming_text(), ui.economy_menu())
+        elif view == "refining":
+            self.edit(chat_id, message_id, self.refining_text(), ui.economy_menu())
+        elif view == "energy":
+            self.edit(chat_id, message_id, ui.render_energy(self.fleet_state()),
+                      ui.economy_menu())
         elif view == "combat":
             self.edit(chat_id, message_id, ui.render_combat(self.combat_memory()),
                       ui.main_menu())
@@ -316,6 +332,19 @@ class TelegramBot:
                     grade=state.get("grade", 1),
                     gold=state.get("gold", 0),
                     energy=state.get("energy", 0),
+                    config=self.config)
+        return "Belum ada state wallet. Tunggu siklus pertama selesai."
+
+    def refining_text(self) -> str:
+        for status in self.fleet.status.values():
+            state = status.state or {}
+            if state:
+                return ui.render_refining(
+                    self.fleet.market,
+                    level=state.get("level", 1),
+                    grade=state.get("grade", 1),
+                    gold=state.get("gold", 0),
+                    holdings=status.holdings or {},
                     config=self.config)
         return "Belum ada state wallet. Tunggu siklus pertama selesai."
 

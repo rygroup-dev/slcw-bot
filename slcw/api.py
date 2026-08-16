@@ -84,6 +84,23 @@ class GameApi:
         """Payload shape is built by slcw.farming.build_payload."""
         return self._call(session, "startFarming", payload)
 
+    def start_refining(self, session, payload: dict) -> dict:
+        """Payload shape is built by slcw.refining.Recipe.payload."""
+        return self._call(session, "startRefining", payload)
+
+    def purchase_crafting_item(self, session, payload: dict) -> dict:
+        """Buy refining catalysts for gold. Payload from refining.catalyst_payload."""
+        return self._call(session, "purchaseCraftingItem", payload)
+
+    def refill_energy_free(self, session) -> dict:
+        """Free energy refill. Three per day; the server enforces the cap."""
+        return self._call(session, "refillEnergyFree")
+
+    def get_holdings(self, session) -> dict:
+        """Item id -> total quantity across inventory slots."""
+        from .market import inventory_holdings
+        return inventory_holdings(self.get_inventory(session))
+
     def start_travel(self, session, destination_id: str) -> dict:
         return self._call(session, "startTravel", {"destinationId": destination_id})
 

@@ -107,6 +107,10 @@ class PlayerState:
     attribute_points: int = 0
     newbie_quest: int = 0
     location_id: str = ""
+    # Free energy refills are capped at three per day and reset by date, so both
+    # halves are needed to know whether any remain.
+    free_refills_today: int = 0
+    last_free_refill_date: str = ""
     attributes: dict = field(default_factory=dict)
     professions: dict = field(default_factory=dict)
     equipment: dict = field(default_factory=dict)
@@ -133,6 +137,14 @@ class PlayerState:
     @property
     def is_busy(self) -> bool:
         return self.activity is not None and not self.activity.is_expired
+
+    FREE_REFILLS_PER_DAY = 3
+
+    def free_refills_left(self, today: str | None = None) -> int:
+        """Refills remaining today. The counter resets when the date changes."""
+        today = today or _dt.datetime.now(_dt.timezone.utc).date().isoformat()
+        used = self.free_refills_today if self.last_free_refill_date == today else 0
+        return max(0, self.FREE_REFILLS_PER_DAY - used)
 
     def unclaimed_levels(self) -> list[int]:
         return [lvl for lvl in range(1, self.level + 1) if lvl not in self.claimed_levels]
@@ -168,6 +180,8 @@ def parse_player(doc: dict) -> PlayerState:
         attribute_points=int(doc.get("attributePoints", 0) or 0),
         newbie_quest=int(doc.get("newbieQuest", 0) or 0),
         location_id=str(doc.get("currentLocationId") or ""),
+        free_refills_today=int(doc.get("freeEnergyRefillsToday", 0) or 0),
+        last_free_refill_date=str(doc.get("lastFreeEnergyRefillDate") or ""),
         attributes=attributes,
         professions=doc.get("professions") or {},
         equipment=doc.get("equipment") or {},

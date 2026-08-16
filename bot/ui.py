@@ -16,10 +16,19 @@ def keyboard(rows: list[list[tuple[str, str]]]) -> str:
 def main_menu() -> str:
     return keyboard([
         [("📊 Status", "nav:status"), ("💰 Profit", "nav:profit")],
-        [("🏪 Market", "nav:market"), ("🌾 Farming", "nav:farming")],
+        [("🏪 Market", "nav:market"), ("⚗️ Ekonomi", "nav:economy")],
         [("⚔️ Combat", "nav:combat"), ("👛 Wallets", "wallet:list")],
         [("⚙️ Kontrol", "nav:control"), ("🔐 Vault", "nav:vault")],
         [("🔄 Refresh", "nav:status")],
+    ])
+
+
+def economy_menu() -> str:
+    return keyboard([
+        [("🔗 Rantai profit", "nav:chain")],
+        [("🌾 Gathering", "nav:farming"), ("⚗️ Refining", "nav:refining")],
+        [("⚡ Energi", "nav:energy")],
+        back_row(),
     ])
 
 
@@ -315,6 +324,115 @@ def render_farming(market, level: int, grade: int, gold: int, energy: int,
         lines.append("")
 
     lines.append("<i>Resource tanpa bid dinilai nol — engine tidak menebak harga.</i>")
+    return "\n".join(lines)
+
+
+def render_chain(market, config) -> str:
+    """The whole raw → refined economics in one view.
+
+    Gathering alone loses money because raw materials carry no bids. This shows
+    where the value actually appears, and what each link costs.
+    """
+    from slcw import farming, refining
+
+    per_unit = (farming.gold_mode_cost(1, config.farming_gold_hours)["gold"]
+                / (60 * config.farming_gold_hours))
+
+    lines = ["<b>🔗 Rantai profit</b> · tier 1, mode gold (tanpa energi)", "",
+             f"<i>Gathering: {per_unit:.2f} gold per unit mentah "
+             f"({config.farming_gold_hours} jam, 0 energi)</i>", ""]
+
+    for workshop in refining.WORKSHOPS.values():
+        item = workshop.output_for_tier(1)
+        raw = workshop.raw_for(item)
+        farm = refining.PROFESSION_FARM[workshop.profession]
+        raw_needed = refining.raw_per_cycle(1)
+        raw_cost = per_unit * raw_needed
+        refine_gold = refining.GOLD_PER_CYCLE[1]
+        catalyst_gold = refining.catalyst_price(1)
+        bid = (market.best_bid(item) if market else None) or 0
+        catalyst = workshop.catalyst_for(1)
+        total = raw_cost + refine_gold + catalyst_gold
+
+        lines.append(f"<b>{workshop.id}</b> · {farm} → {workshop.city_id}")
+        lines.append(f"  {raw_needed}× {html.escape(raw)} ({raw_cost:.0f}g)")
+        lines.append(f"  1× {html.escape(catalyst)} ({catalyst_gold}g) "
+                     f"+ {refine_gold}g refine")
+        lines.append(f"  = modal <b>{total:.0f}g</b>")
+        if bid:
+            margin = bid - total
+            arrow = "🟢" if margin > 0 else "🔴"
+            multiple = bid / total if total else 0
+            lines.append(f"  → 1× {html.escape(item)} @ <b>{bid:,.0f}g</b>")
+            lines.append(f"  {arrow} <b>{margin:+,.0f}g</b> per unit · {multiple:.1f}×")
+        else:
+            lines.append(f"  → 1× {html.escape(item)} — <i>belum ada bid</i>")
+        lines.append("")
+
+    lines.append("<i>Semua angka terukur: biaya gathering dari rumus mode-gold, "
+                 "harga katalis dari shop kota, biaya refine per tier, dan bid "
+                 "dari order book langsung.</i>")
+    return "\n".join(lines)
+
+
+def render_refining(market, level: int, grade: int, gold: int, holdings: dict,
+                    config) -> str:
+    """Per-workshop feasibility given what the account actually holds."""
+    from slcw import refining
+
+    lines = [f"<b>⚗️ Refining</b> · grade {grade} · {gold:,} gold", ""]
+
+    for workshop in refining.WORKSHOPS.values():
+        lines.append(f"<b>{workshop.id}</b> · {workshop.city_id} · {workshop.profession}")
+        recipe = refining.best_recipe(
+            workshop, level, grade, holdings or {},
+            max(0, gold - config.gold_reserve), market)
+
+        if recipe is None:
+            # Show the cheapest tier's shortfall so the operator knows what to get.
+            item = workshop.output_for_tier(1)
+            probe = refining.Recipe(workshop, item, 1, cycles=1)
+            short = probe.missing(holdings or {}, gold)
+            need = ", ".join(f"{q}× {html.escape(str(i))}" for i, q in short.items())
+            lines.append(f"  ❌ kurang: {need or 'grade terlalu rendah'}")
+        else:
+            bid = (market.best_bid(recipe.item_id) if market else None) or 0
+            value = bid * recipe.output_quantity
+            lines.append(f"  ✅ {recipe.cycles}× {html.escape(recipe.item_id)} "
+                         f"(T{recipe.tier}) · {recipe.duration_seconds // 60}m")
+            lines.append(f"     biaya {recipe.gold_cost}g + "
+                         + ", ".join(f"{q}× {html.escape(i)}"
+                                     for i, q in recipe.inputs().items()))
+            if value:
+                lines.append(f"     hasil ≈ <b>{value:,.0f}g</b> "
+                             f"(bersih {value - recipe.gold_cost:+,.0f}g)")
+            else:
+                lines.append("     hasil belum punya bid")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def render_energy(fleet_state: dict) -> str:
+    """Free refill quota per wallet — three a day, and easy to leave unused."""
+    wallets = fleet_state.get("wallets", {})
+    if not wallets:
+        return "Belum ada data wallet."
+
+    lines = ["<b>⚡ Energi</b> · refill gratis 3× per hari per wallet", ""]
+    for wallet_id, status in sorted(wallets.items()):
+        state = status.get("state") or {}
+        energy = state.get("energy", 0)
+        maximum = state.get("max_energy", 100)
+        left = state.get("free_refills_left")
+        lines.append(f"<b>{wallet_id}</b> {status.get('nickname', '')}")
+        lines.append(f"  {_bar(energy, maximum)} {energy}/{maximum}")
+        if left is not None:
+            marks = "🟢" * left + "⚪" * (3 - left)
+            lines.append(f"  refill tersisa: {marks} ({left}/3)")
+        lines.append("")
+    lines.append("<i>Bot menunggu bar turun di bawah 35% sebelum memakai refill, "
+                 "supaya satu jatah tidak terbuang untuk beberapa poin saja. "
+                 "Refill berbayar (99×2ⁿ diamond) diblokir permanen.</i>")
     return "\n".join(lines)
 
 

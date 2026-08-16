@@ -6,7 +6,7 @@
 
 [![tests](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml/badge.svg)](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml)
 [![python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab?logo=python&logoColor=white)](https://www.python.org/)
-[![tests](https://img.shields.io/badge/tests-237%20passing-4c1)](tests/)
+[![tests](https://img.shields.io/badge/tests-304%20passing-4c1)](tests/)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 Every action is priced in gold-per-hour before it runs.
@@ -76,11 +76,11 @@ Everything runs from inline keyboards that edit **one live dashboard**, rather t
 flooding the chat with stale snapshots.
 
 ```
-┌─────────────────────────────┐
-│  📊 Status      💰 Profit   │
-│  🏪 Market      🌾 Farming  │
-│  ⚔️ Combat      👛 Wallets  │
-│  ⚙️ Kontrol     🔐 Vault    │
+┌─────────────────────────────┐        ⚗️ Ekonomi
+│  📊 Status      💰 Profit   │        ├── 🔗 Rantai profit
+│  🏪 Market      ⚗️ Ekonomi  │        ├── 🌾 Gathering
+│  ⚔️ Combat      👛 Wallets  │        ├── ⚗️ Refining
+│  ⚙️ Kontrol     🔐 Vault    │        └── ⚡ Energi
 └─────────────────────────────┘
 ```
 
@@ -89,7 +89,10 @@ flooding the chat with stale snapshots.
 | **📊 Status** | per-wallet HP/energy bars, gold, current activity, next wake time |
 | **💰 Profit** | realised gold and XP, rate per hour, win rate, drops valued at live bids |
 | **🏪 Market** | order book, crossed spreads, your holdings at best bid |
-| **🌾 Farming** | what every gathering site would actually pay, both funding modes |
+| **🔗 Rantai profit** | the full raw → catalyst → refined chain with the margin at each link |
+| **🌾 Gathering** | what every gathering site would pay, both funding modes |
+| **⚗️ Refining** | per-workshop feasibility and exactly what each run is short of |
+| **⚡ Energi** | free refill quota per wallet — three a day, easy to leave unused |
 | **⚔️ Combat** | the learned per-monster model — which zones it blocks and attacks |
 | **👛 Wallets** | per-wallet detail, pause/resume, force cycle, **🧠 Kenapa?** |
 | **⚙️ Kontrol** | resume, pause, force cycle, dry-run toggle, logs, doctor |
@@ -125,6 +128,9 @@ and takes the best.
 | `finishActivity` | **∞** — the reward is already earned, it is sitting there |
 | `claimInitialReward` | **∞** — free |
 | `spendAttributePoints` | **∞** — free progression |
+| `refillEnergyFree` | **∞** — three a day, free, and energy gates everything |
+| `startRefining` | output × live best bid − gold cost |
+| `purchaseCraftingItem` | the refining run it unlocks − its own cost |
 | `startProduction` | 1,000 gold per 18 minutes for 10 energy |
 | `startFarming` | resources × live best bid − gold cost |
 | `battle` | XP value + expected drop value − HP risk |
@@ -140,12 +146,33 @@ as the bar drains:
 
 The blend is continuous, so there is no threshold for the engine to oscillate around.
 
+### The production chain
+
+Gathering on its own loses money — raw ores, logs, fibers and skins carry **no market
+bids at all**. Only refined goods trade. The engine models the whole chain and prices
+every link from live data:
+
+```
+  gather (gold mode, 0 energy)      9 × copper_ore        37 g
+  buy catalyst from the city shop   1 × smelting_flux_1   20 g
+  refine                                                   5 g
+                                                    ─────────
+                                          cost            62 g
+                                          →  1 copper_ingot @ 888 g   🟢 +826 g · 14×
+```
+
+Every number there is measured: the gathering cost comes from the gold-mode formula,
+the catalyst price from the city shop table, the refining cost from the per-tier
+table, and the bid from the live order book.
+
+Catalysts are the one input that cannot be gathered or traded, so when they are the
+only thing blocking a profitable run the engine buys them — scored by the value of
+the run they unlock, not as a bare outflow.
+
 ### It refuses to lose money
 
-Actions returning less than they cost are discarded. This is why the bot currently
-**declines to gather**: raw ores, logs, fibers and skins have no market bid, and it
-will not spend gold producing output it cannot price. That is the guard working, not
-a bug.
+Actions returning less than they cost are discarded. If an output has no bid, it is
+valued at zero and loses to anything measurable, rather than being taken on optimism.
 
 ### It shows its work
 
@@ -180,15 +207,21 @@ and stops our own choices from becoming predictable.
 path to the network passes through it, so a denied call fails before a request is
 even constructed — no caller has to remember.
 
+All **70 callables** found in the game's frontend are classified — each is either
+allowed or denied **with a recorded reason**, so none is left to chance.
+
 **Permanently denied. Not configurable, not toggleable:**
 
 | Denied | Why |
 |---|---|
 | `skipActivityTime` | costs 5 diamonds per remaining minute |
+| `refillEnergyPaid` | costs 99 × 2ⁿ diamonds for what the free call also gives |
 | farming `diamond` mode | licence costs 49 × 3^(tier−1) diamonds |
 | `withdraw`, `transfer`, `signTransaction` | moves real funds |
-| `createOrder`, `cancelOrder` | the bot never trades on its own |
-| `payCityEntryFee`, `buyLevel`, arena queue | costed, with no measured return |
+| `placeGoldOrder`, `createOrder`, `cancelOrder` | the bot never trades on its own |
+| `evolveGrade`, `sharpenItem`, `deleteInventoryItem` | consumes items irreversibly |
+| `payCityEntryFee`, `buyLevel`, arena, caravan | costed, with no measured return |
+| `handleReferral` | binds accounts together; an operator decision |
 
 Crossed spreads are surfaced with the numbers so **you** can act. The bot will not
 place the order.
@@ -337,7 +370,11 @@ leather. Raw ores, logs, fibers and skins have no bids at all, so gathering is o
 profitable through crafting. Mapping the crafting chain is the next meaningful
 unlock, and the engine already declines to gather until then.
 
-**Expeditions and arena are unmapped.** The callables exist and are denied until
+**Only tier 1 is reachable at grade 1.** Higher refining tiers pay far more, but each
+is gated by character grade, and raising grade consumes imperial seals — an
+irreversible spend the engine will not make on its own.
+
+**Expeditions, arena, caravans and mounts are unmapped.** The callables exist and are denied until
 their reward and cost models are measured, rather than enabled on a guess.
 
 ---

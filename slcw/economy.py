@@ -191,6 +191,74 @@ def farming_candidates(resource, state, market, config) -> list[ActionScore]:
     return candidates
 
 
+def refining_candidate(recipe, market, config) -> ActionScore:
+    """Value a refining run at the market price of what it produces.
+
+    This is the step that makes gathering worth anything: raw materials have no
+    bids, refined goods do. A recipe whose output is unpriced scores zero and
+    loses to anything measurable, rather than being taken on optimism.
+    """
+    bid = (market.best_bid(recipe.item_id) or 0.0) if market is not None else 0.0
+    stale = market is None or not market.is_fresh(config.market_ttl_seconds)
+    unpriced = bid <= 0
+
+    inputs = ", ".join(f"{quantity}× {item}"
+                       for item, quantity in recipe.inputs().items())
+    return ActionScore(
+        action="startRefining",
+        params=recipe.payload(),
+        gold_equivalent=bid * recipe.output_quantity,
+        energy_cost=0,
+        gold_cost=recipe.gold_cost,
+        duration_seconds=max(1, recipe.duration_seconds),
+        reason=(f"{recipe.cycles}× {recipe.item_id} (T{recipe.tier}) from {inputs} "
+                f"+ {recipe.gold_cost}g"
+                + (" — output has no bid, valued at 0" if unpriced
+                   else f", sells {bid:,.0f}g each")),
+        degraded=stale or unpriced,
+    )
+
+
+def catalyst_candidate(workshop, tier: int, quantity: int, unlocked_value: float,
+                       market_stale: bool) -> ActionScore:
+    """Buying catalysts is an investment, valued at the refining run it enables.
+
+    Scoring it by what it unlocks — rather than as a bare gold outflow — is what
+    lets the engine spend gold on an input that has no resale value of its own.
+    """
+    from . import refining
+
+    cost = refining.catalyst_price(tier) * quantity
+    return ActionScore(
+        action="purchaseCraftingItem",
+        params=refining.catalyst_payload(workshop, tier, quantity),
+        gold_equivalent=unlocked_value,
+        energy_cost=0,
+        gold_cost=cost,
+        duration_seconds=5.0,
+        reason=(f"{quantity}× {workshop.catalyst_for(tier)} for {cost:,}g, "
+                f"unlocking ~{unlocked_value:,.0f}g of refining"),
+        degraded=market_stale,
+    )
+
+
+def energy_refill_candidate(state) -> ActionScore:
+    """A free refill is pure gain, but only while there is room in the bar.
+
+    Calling it at full energy would burn one of the three daily uses for nothing.
+    """
+    restored = max(0, state.max_energy - state.energy)
+    return ActionScore(
+        action="refillEnergyFree",
+        params={},
+        gold_equivalent=INFINITE,
+        duration_seconds=1.0,
+        score=INFINITE,
+        reason=f"free refill restores {restored} energy "
+               f"({state.free_refills_left()} left today)",
+    )
+
+
 def relax_candidate(state) -> ActionScore:
     """Resting produces nothing directly; its value is the HP it restores.
 

@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass, field
 
 from . import economy as econ
-from . import farming
+from . import farming, refining
 from .combat import CombatMemory, select_monster
 from .config import Config
 from .guardrails import GuardrailViolation
@@ -32,6 +32,10 @@ BATTLE_LOCATIONS = {"farm_3", "wildland_1"}
 
 # Never start a fight below this health ratio, whatever the score says.
 BATTLE_MIN_HEALTH_RATIO = 0.45
+
+# Take a free energy refill only once the bar has drained this far, so a daily
+# use is never spent restoring a handful of points.
+ENERGY_REFILL_RATIO = 0.35
 
 
 @dataclass
@@ -82,11 +86,12 @@ class Orchestrator:
     combat: CombatMemory = field(default_factory=CombatMemory)
     rng: random.Random = field(default_factory=random.Random)
 
-    def decide_and_act(self, wallet: dict, session, state, market=None) -> Decision:
+    def decide_and_act(self, wallet: dict, session, state, market=None,
+                       holdings=None) -> Decision:
         decision = Decision(wallet_id=wallet["id"], dry_run=self.config.dry_run)
 
         try:
-            candidates = self.build_candidates(state, market)
+            candidates = self.build_candidates(state, market, holdings)
             decision.considered = candidates
             if not candidates:
                 decision.action = "idle"
@@ -116,7 +121,7 @@ class Orchestrator:
         return decision
 
     # --- candidate generation -------------------------------------------
-    def build_candidates(self, state, market=None) -> list:
+    def build_candidates(self, state, market=None, holdings=None) -> list:
         # Free value first: an expired activity is reward already earned, and
         # unclaimed level rewards cost nothing.
         if state.activity is not None and state.activity.is_expired:
@@ -139,6 +144,12 @@ class Orchestrator:
                 {"targetType": "attribute", "targetId": "vitality", "amount": 1},
                 f"{state.attribute_points} attribute point(s) unspent")]
 
+        # Three free refills a day, and energy gates almost everything. Only worth
+        # taking once the bar has drained enough that a refill is not wasted.
+        if (state.free_refills_left() > 0
+                and state.energy <= state.max_energy * ENERGY_REFILL_RATIO):
+            return [econ.energy_refill_candidate(state)]
+
         candidates = []
         stale = market is None or not market.is_fresh(self.config.market_ttl_seconds)
 
@@ -153,6 +164,21 @@ class Orchestrator:
 
         if state.location_id in PRODUCTION_LOCATIONS and state.energy >= econ.PRODUCTION_ENERGY:
             candidates.append(econ.production_candidate(cycles=1))
+
+        # Refining. This is what makes gathering worth doing at all: raw materials
+        # carry no bids, refined goods do.
+        workshop = refining.workshop_at(state.location_id)
+        if workshop is not None:
+            spendable = max(0, state.gold - self.config.gold_reserve)
+            recipe = refining.best_recipe(
+                workshop, state.level, state.grade, holdings or {}, spendable, market)
+            if recipe is not None:
+                candidates.append(econ.refining_candidate(recipe, market, self.config))
+            else:
+                catalyst = self._catalyst_candidate(
+                    workshop, state, holdings or {}, spendable, market, stale)
+                if catalyst is not None:
+                    candidates.append(catalyst)
 
         # Gathering. Reverse-engineered from the frontend; the bot previously had
         # no access to this economy at all.
@@ -197,6 +223,48 @@ class Orchestrator:
                       if c.score > 0 or (c.action == "startRelax" and needs_rest)]
         return econ.rank(profitable)
 
+    def _catalyst_candidate(self, workshop, state, holdings: dict, spendable: int,
+                            market, stale: bool):
+        """Buy catalysts when they are the only thing blocking a profitable run.
+
+        Only worth doing when the raw material is already in hand and the output
+        has a real bid — otherwise this is spending gold on an item with no resale
+        value for a run that may never pay.
+        """
+        if market is None or stale:
+            return None
+
+        best = None
+        for tier in range(1, len(workshop.items) + 1):
+            if state.grade < tier:
+                break
+            item_id = workshop.output_for_tier(tier)
+            bid = market.best_bid(item_id) or 0.0
+            if bid <= 0:
+                continue
+
+            reachable = refining.cycles_if_catalyst_bought(
+                workshop, item_id, holdings, spendable)
+            have = int(holdings.get(workshop.catalyst_for(tier), 0))
+            needed = reachable - have
+            if reachable <= 0 or needed <= 0:
+                continue
+
+            quantity = refining.affordable_catalysts(tier, spendable, needed)
+            if quantity <= 0:
+                continue
+
+            # Value of the run this purchase makes possible, net of its own costs.
+            unlocked = (bid * reachable
+                        - refining.GOLD_PER_CYCLE.get(tier, 0) * reachable)
+            if best is None or unlocked > best[0]:
+                best = (unlocked, tier, quantity)
+
+        if best is None:
+            return None
+        unlocked, tier, quantity = best
+        return econ.catalyst_candidate(workshop, tier, quantity, unlocked, stale)
+
     def _idle_reason(self, state) -> str:
         if state.is_busy and state.activity:
             remaining = state.activity.seconds_remaining()
@@ -224,6 +292,12 @@ class Orchestrator:
             return self.api.start_production(session, candidate.params.get("cycles", 1))
         if action == "startFarming":
             return self.api.start_farming(session, candidate.params)
+        if action == "startRefining":
+            return self.api.start_refining(session, candidate.params)
+        if action == "refillEnergyFree":
+            return self.api.refill_energy_free(session)
+        if action == "purchaseCraftingItem":
+            return self.api.purchase_crafting_item(session, candidate.params)
         if action == "battle":
             return self.run_battle(session, candidate.params["monsterId"])
         raise GuardrailViolation(f"orchestrator has no executor for {action!r}")
