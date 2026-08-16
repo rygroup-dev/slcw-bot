@@ -137,10 +137,10 @@ flooding the chat with stale snapshots.
 │  📊 Status      💰 Profit   │        ├── 🔗 Rantai profit
 │  🏪 Market      ⚗️ Ekonomi  │        ├── 🌾 Gathering
 │  ⚔️ Combat      🎯 Task     │        ├── ⚗️ Refining
-│  🎒 Inventory   🗺 Peta     │        ├── ⚡ Energi
-│  👛 Wallets     🔨 Crafting │        └── 🗺 Peta
-│  ⚙️ Kontrol     🔐 Vault    │
-└─────────────────────────────┘
+│  🎒 Inventory   🧬 Profil   │        ├── ⚡ Energi  · 🗺 Peta
+│  👛 Wallets     🔨 Crafting │        ├── 🟢 Gold-mode ON/OFF
+│  ⚙️ Kontrol     🔐 Vault    │        ├── ⏱ Durasi gold-mode
+└─────────────────────────────┘        └── 🟢 Auto-travel ON/OFF
 ```
 
 | View | Shows |
@@ -151,6 +151,7 @@ flooding the chat with stale snapshots.
 | **🔗 Rantai profit** | the full raw → catalyst → refined chain with the margin at each link |
 | **🌾 Gathering** | what every gathering site would pay, both funding modes |
 | **⚗️ Refining** | per-workshop feasibility and exactly what each run is short of |
+| **🧬 Profil** | attributes, the stats they produce, active set bonus, next point |
 | **⚡ Energi** | free refill quota per wallet — three a day, easy to leave unused |
 | **🗺 Peta** | where each wallet stands and how far every useful destination is |
 | **🎯 Task** | hunt-ladder progress, reward, and why it may be locked |
@@ -255,6 +256,57 @@ Travel time follows the client's own formula — 20 seconds per unit of map dist
 less any mount bonus. A destination must beat staying put by `SLCW_TRAVEL_MARGIN`
 (1.35× by default) before the trip is taken, because travel time is dead time and a
 marginal gain does not repay it.
+
+### Two switches worth understanding
+
+Both are on by default, both are toggled from **⚗️ Ekonomi**, and they answer
+different questions.
+
+**🌾 Gold-mode gathering — how a gathering run is paid for**
+
+Gathering has two funding modes, and the engine scores both:
+
+| | Energy mode | Gold mode |
+|---|---|---|
+| Costs | 1 energy + `3^(tier−1)` gold per unit | gold only, no energy |
+| Duration | 1 minute per unit | a fixed 1–8 hours |
+| Wallet is | free after each short run | **locked for the whole run** |
+
+Gold mode is efficient on paper — it turns idle gold into materials without
+touching the energy bar, so it runs alongside the energy economy rather than
+competing with it. But it takes the wallet out of circulation entirely: no
+levelling, no chest opening, no task claims, no reacting to anything, until it
+finishes. A gold-per-hour score cannot express that cost, which is exactly why
+this is a switch and not something the engine decides.
+
+Shorter runs stay nimble and get interrupted more often; longer runs return the
+most per trip and cost the most flexibility. Four hours is a reasonable middle
+while accounts are still low level and each level is cheap.
+
+**🗺 Auto-travel — whether a wallet may relocate**
+
+Gathering happens at farm zones, refining in city workshops, production and
+battle somewhere else again. A wallet that cannot move is limited to whatever
+tile it happens to stand on.
+
+Each destination is valued by what the wallet would actually *do* there — not
+one action, but the whole stay, because a wallet that travels to fight fights
+until its energy runs out. That distinction matters more than it sounds:
+
+```
+walk 22 min to farm_3, counted as one 45s battle     →    465 g/h   (never goes)
+walk 22 min to farm_3, counted as the real stay      →  8,900 g/h   (goes)
+```
+
+Scored the first way, travel always lost, and every wallet stayed pinned to
+whatever it started doing — the gold-rich ones farming forever with no XP, the
+gold-poor ones battling forever with no gold. A destination must still beat
+staying put by `SLCW_TRAVEL_MARGIN` (1.35x) before the trip is taken, which is
+what stops the fleet pacing between locations for marginal gains.
+
+**In short:** gold-mode decides *how long a wallet disappears for*; auto-travel
+decides *whether it is allowed to go somewhere better*. Turning gold-mode off
+keeps wallets responsive; turning auto-travel off keeps them where they are.
 
 ### It refuses to lose money
 
