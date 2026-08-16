@@ -42,6 +42,9 @@ class TelegramClient:
     serialise every reply behind it.
     """
 
+    # Floor for uploads, which carry a payload rather than a short form post.
+    timeout_floor: float = 15.0
+
     def __init__(self, token: str):
         self.token = token
         self._send_session = cffi.Session()
@@ -107,6 +110,33 @@ class TelegramClient:
         """
         try:
             return self.call(method, payload, attempts=1)
+        except Exception:
+            return {}
+
+    def upload(self, method: str, payload: dict, filename: str,
+               content: str) -> dict:
+        """Send a multipart request carrying an in-memory file.
+
+        Used for wallet exports: a document keeps key material out of chat
+        previews and notifications, where a plain message would put it.
+        """
+        try:
+            with self._lock:
+                response = self._send_session.post(
+                    self._url(method),
+                    data=payload,
+                    files={"document": (filename, content.encode("utf-8"),
+                                        "application/json")},
+                    timeout=max(self.timeout_floor, 60.0),
+                )
+        except Exception as exc:
+            raise TelegramError(f"upload failed: {type(exc).__name__}: {exc}") from exc
+
+        if response.status_code != 200:
+            raise TelegramError(f"upload HTTP {response.status_code}",
+                                status=response.status_code)
+        try:
+            return response.json() or {}
         except Exception:
             return {}
 

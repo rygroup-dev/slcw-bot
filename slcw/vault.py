@@ -131,13 +131,39 @@ class Vault:
 
     def public_summary(self) -> list[dict]:
         """Wallet listing safe to render anywhere — no private material."""
+        primary = self.primary()
+        primary_id = primary["id"] if primary else None
         return [{
             "id": w["id"],
             "nickname": w.get("nickname", ""),
             "public_key": w.get("public_key", ""),
             "enabled": w.get("enabled", True),
             "proxy": "set" if w.get("proxy") else "none",
+            "is_primary": w["id"] == primary_id,
         } for w in self._require()]
+
+    def primary(self) -> dict | None:
+        """The wallet that funds the others.
+
+        Whichever wallet was added first holds the flag unless it is moved, so
+        an existing vault gets a sensible answer without needing migration.
+        """
+        wallets = self._require()
+        if not wallets:
+            return None
+        flagged = next((w for w in wallets if w.get("is_primary")), None)
+        return flagged or wallets[0]
+
+    def set_primary(self, wallet_id: str) -> dict:
+        """Move the primary flag. Exactly one wallet carries it."""
+        wallets = self._require()
+        target = next((w for w in wallets if w["id"] == wallet_id), None)
+        if target is None:
+            raise KeyError(wallet_id)
+        for wallet in wallets:
+            wallet["is_primary"] = wallet is target
+        self._persist()
+        return target
 
     # --- writes ----------------------------------------------------------
     def create_wallets(self, count: int, prefix: str = "wallet") -> list[dict]:
@@ -158,6 +184,8 @@ class Vault:
                 "persona": build_persona(wallet_id),
                 "proxy": None,
                 "enabled": True,
+                # The first wallet in an empty vault funds the rest.
+                "is_primary": not wallets,
                 "onboarded": False,
                 # Each wallet sleeps on its own schedule so daily activity patterns
                 # differ between accounts instead of moving in lockstep.
@@ -201,6 +229,7 @@ class Vault:
             "persona": build_persona(wallet_id),
             "proxy": None,
             "enabled": True,
+            "is_primary": not wallets,
             # Imported accounts already exist in-game, so onboarding is skipped.
             "onboarded": True,
             "imported": True,
@@ -241,6 +270,7 @@ class Vault:
                 "persona": build_persona(wallet_id),
                 "proxy": None,
                 "enabled": True,
+                "is_primary": len(self._wallets) == 0,
                 "onboarded": True,
                 "sleep_anchor_hour": random.randint(0, 23),
                 "sleep_hours": round(random.uniform(6.0, 9.0), 2),

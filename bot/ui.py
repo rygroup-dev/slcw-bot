@@ -90,7 +90,7 @@ def wallet_list(wallets: list[dict], status: dict) -> str:
         mark = "⏸" if state.get("paused") else "▶️"
         label = f"{mark} {wallet['id']} · {wallet.get('nickname', '')}"
         rows.append([(label, f"wallet:show:{wallet['id']}")])
-    rows.append([("➕ Buat wallet", "wallet:new")])
+    rows.append([("➕ Buat wallet", "wallet:new"), ("🛠 Tools", "wallet:tools")])
     rows.append(back_row())
     return keyboard(rows)
 
@@ -102,6 +102,83 @@ def wallet_detail(wallet_id: str, paused: bool) -> str:
         [toggle, ("🔄 Siklus", f"wallet:force:{wallet_id}")],
         [("🧠 Kenapa?", f"wallet:why:{wallet_id}")],
         [("⬅️ Wallets", "wallet:list"), ("🏠 Menu", "nav:main")],
+    ])
+
+
+def wallet_tools_menu() -> str:
+    """Actions that touch key material or funds, kept off the main list."""
+    return keyboard([
+        [("📤 Export private key", "wallet:exportask")],
+        [("💸 Primary → semua", "wallet:sendask")],
+        [("↩️ Semua → primary", "wallet:sweepask")],
+        [("🔁 Antar wallet", "wallet:p2pask")],
+        [("👑 Ganti primary", "wallet:primaryask")],
+        [("⬅️ Wallets", "wallet:list")],
+    ])
+
+
+def primary_picker_menu(wallets: list[dict]) -> str:
+    rows = [[(("👑 " if w.get("is_primary") else "") + f"{w['id']} · {w['nickname']}",
+              f"wallet:primaryset:{w['id']}")] for w in wallets[:10]]
+    rows.append([("⬅️ Tools", "wallet:tools")])
+    return keyboard(rows)
+
+
+def sweep_confirm_menu(destination_id: str) -> str:
+    return keyboard([
+        [("⚠️ Ya, tarik semua", f"wallet:sweepgo:{destination_id}")],
+        [("✖️ Batal", "wallet:tools")],
+    ])
+
+
+def p2p_source_menu(wallets: list[dict]) -> str:
+    rows = [[(f"{w['id']} · {w['balance_sol']:.4f} SOL", f"wallet:p2psrc:{w['id']}")]
+            for w in wallets[:8]]
+    rows.append([("⬅️ Tools", "wallet:tools")])
+    return keyboard(rows)
+
+
+def p2p_dest_menu(source_id: str, wallets: list[dict]) -> str:
+    rows = [[(("👑 " if w.get("is_primary") else "") + f"{w['id']} · {w['nickname']}",
+              f"wallet:p2pdst:{source_id}:{w['id']}")]
+            for w in wallets[:10] if w["id"] != source_id]
+    rows.append([("⬅️ Ganti sumber", "wallet:p2pask")])
+    return keyboard(rows)
+
+
+def amount_menu(callback_prefix: str, amounts=(0.001, 0.005, 0.01, 0.05, 0.1, 0.5)) -> str:
+    """Preset amounts plus a manual-entry escape hatch."""
+    rows = [[(f"{a:g}", f"{callback_prefix}:{a:g}") for a in amounts[i:i + 3]]
+            for i in range(0, len(amounts), 3)]
+    rows.append([("✏️ Ketik manual", "wallet:manualhelp")])
+    rows.append([("⬅️ Tools", "wallet:tools")])
+    return keyboard(rows)
+
+
+def export_confirm_menu() -> str:
+    return keyboard([
+        [("⚠️ Ya, kirim file kunci", "wallet:exportgo")],
+        [("✖️ Batal", "wallet:list")],
+    ])
+
+
+def send_amount_menu() -> str:
+    return amount_menu("wallet:sendamt")
+
+
+def send_source_menu(wallets: list[dict], amount: float) -> str:
+    """Pick which wallet pays. Only funded wallets are offered."""
+    rows = [[(f"{w['id']} · {w['balance_sol']:.4f} SOL",
+              f"wallet:sendsrc:{amount:g}:{w['id']}")]
+            for w in wallets[:8]]
+    rows.append([("⬅️ Ganti jumlah", "wallet:sendask"), ("✖️ Batal", "wallet:list")])
+    return keyboard(rows)
+
+
+def send_confirm_menu(amount: float, source_id: str) -> str:
+    return keyboard([
+        [("⚠️ Ya, kirim sekarang", f"wallet:sendgo:{amount:g}:{source_id}")],
+        [("✖️ Batal", "wallet:list")],
     ])
 
 
@@ -839,6 +916,184 @@ def render_created(created: list[dict]) -> str:
     return (f"<b>✅ {len(created)} wallet dibuat</b>\n\n{listing}\n\n"
             f"<i>Kunci privat ada di vault terenkripsi dan tidak akan pernah "
             f"ditampilkan di sini. Onboarding in-game jalan otomatis.</i>")
+
+
+WALLET_TOOLS_INTRO = (
+    "<b>🛠 Wallet tools</b>\n\n"
+    "Dua aksi di sini menyentuh kunci dan dana sungguhan. Semua yang lain di bot "
+    "ini tidak bisa memindahkan uang sama sekali.\n\n"
+    "<b>📤 Export</b> — cadangan semua private key sebagai file JSON.\n"
+    "<b>💸 Kirim SOL</b> — bagikan SOL dari satu wallet ke semua wallet lain.\n\n"
+    "<i>Keduanya cukup dikonfirmasi dengan tombol. Siapa pun yang memegang token "
+    "bot ini bisa menjalankannya.</i>")
+
+
+def render_export_warning(count: int) -> str:
+    return (f"<b>📤 Export {count} private key</b>\n\n"
+            f"File JSON berisi kunci <b>polos</b> akan dikirim ke chat ini, lalu "
+            f"dihapus otomatis setelah 60 detik.\n\n"
+            f"Sebelum lanjut, pahami ini:\n"
+            f"  • Siapa pun yang punya file itu <b>menguasai penuh</b> semua wallet\n"
+            f"  • Telegram menyimpannya di server mereka sampai terhapus\n"
+            f"  • Simpan salinannya terenkripsi, jangan di galeri atau cloud biasa\n\n"
+            f"<i>Alternatif paling aman: <code>./slcwctl export</code> di VPS — "
+            f"kunci tidak pernah melewati jaringan.</i>")
+
+
+def render_export_sent(count: int, seconds: int) -> str:
+    return (f"📤 <b>{count} wallet</b> diekspor.\n\n"
+            f"File dihapus dari chat dalam {seconds} detik — simpan sekarang.\n\n"
+            f"<i>Setiap kunci sudah diverifikasi menurunkan public key yang benar, "
+            f"jadi cadangan ini terbukti bisa dipulihkan.</i>")
+
+
+def render_send_ask(funded: list[dict]) -> str:
+    if not funded:
+        return ("<b>💸 Kirim SOL</b>\n\n"
+                "Tidak ada wallet yang punya saldo.\n\n"
+                "<i>Danai dulu salah satu wallet dari luar, baru bisa dibagikan "
+                "ke yang lain.</i>")
+    lines = ["<b>💸 Kirim SOL ke semua wallet</b>", "",
+             "Pilih jumlah <b>per wallet penerima</b>:", "",
+             "<b>Wallet yang punya saldo</b>"]
+    for w in funded[:8]:
+        lines.append(f"  {w['id']} · <b>{w['balance_sol']:.6f} SOL</b>")
+    return "\n".join(lines)
+
+
+def render_send_plan(plan, source_nickname: str = "") -> str:
+    from slcw.solana import lamports_to_sol
+
+    per = lamports_to_sol(plan.per_recipient_lamports)
+    total = lamports_to_sol(plan.total_lamports)
+    fees = lamports_to_sol(plan.fee_lamports)
+    balance = lamports_to_sol(plan.source_balance)
+
+    lines = [
+        "<b>💸 Konfirmasi pengiriman</b>", "",
+        _kv("Dari", f"{plan.source_id} {html.escape(source_nickname)}"),
+        _kv("Saldo", f"{balance:.6f} SOL"),
+        "",
+        _kv("Per wallet", f"<b>{per:.6f} SOL</b>"),
+        _kv("Penerima", f"{plan.count} wallet"),
+        _kv("Total", f"<b>{total:.6f} SOL</b>"),
+        _kv("Biaya", f"~{fees:.6f} SOL"),
+        "",
+    ]
+    if plan.affordable:
+        left = balance - lamports_to_sol(plan.total_lamports + plan.fee_lamports)
+        lines.append(f"Sisa setelah kirim: <b>{left:.6f} SOL</b>")
+        lines.append("")
+        lines.append("<i>Transaksi on-chain tidak bisa dibatalkan. Periksa "
+                     "angkanya sekali lagi sebelum menekan.</i>")
+    else:
+        lines.append(f"❌ <b>Saldo kurang "
+                     f"{lamports_to_sol(plan.shortfall_lamports):.6f} SOL</b>")
+        lines.append("")
+        lines.append("<i>Jumlah itu sudah termasuk biaya per transaksi dan "
+                     "cadangan rent-exempt yang tidak boleh diambil.</i>")
+    return "\n".join(lines)
+
+
+def render_send_results(results: list) -> str:
+    from slcw.solana import lamports_to_sol
+
+    ok = [r for r in results if r.ok]
+    failed = [r for r in results if not r.ok]
+
+    lines = [f"<b>💸 Hasil: {len(ok)} berhasil · {len(failed)} gagal</b>", ""]
+    for result in ok[:10]:
+        lines.append(f"  ✅ {result.wallet_id} · "
+                     f"{lamports_to_sol(result.lamports):.6f} SOL")
+        lines.append(f"     <code>{html.escape(result.signature[:32])}…</code>")
+    if len(ok) > 10:
+        lines.append(f"  <i>… dan {len(ok) - 10} lagi</i>")
+
+    if failed:
+        lines.append("")
+        lines.append("<b>Gagal</b>")
+        for result in failed[:6]:
+            lines.append(f"  ❌ {result.wallet_id}: "
+                         f"<code>{html.escape(str(result.error)[:70])}</code>")
+        lines.append("")
+        lines.append("<i>Yang gagal tidak terkirim sama sekali — aman diulang "
+                     "tanpa risiko dobel.</i>")
+    return "\n".join(lines)
+
+
+MANUAL_AMOUNT_HELP = (
+    "<b>✏️ Jumlah manual</b>\n\n"
+    "Ketik salah satu di chat:\n\n"
+    "<code>/send 0.02</code>\n"
+    "  primary → semua wallet, 0.02 SOL masing-masing\n\n"
+    "<code>/send 0.02 wallet-03</code>\n"
+    "  wallet-03 → semua wallet lain\n\n"
+    "<code>/send 0.02 wallet-03 wallet-07</code>\n"
+    "  wallet-03 → wallet-07 saja\n\n"
+    "<code>/sweep</code>\n"
+    "  semua wallet kirim balik ke primary\n\n"
+    "<i>Koma juga diterima (0,02). Setiap perintah tetap menampilkan konfirmasi "
+    "dengan angka persis sebelum apa pun dikirim.</i>")
+
+
+def render_primary(wallets: list[dict]) -> str:
+    current = next((w for w in wallets if w.get("is_primary")), None)
+    lines = ["<b>👑 Wallet primary</b>", ""]
+    if current:
+        lines.append(f"Sekarang: <b>{current['id']}</b> · "
+                     f"{html.escape(str(current.get('nickname', '')))}")
+        lines.append(f"<code>{html.escape(current['public_key'])}</code>")
+    lines += ["", "Primary adalah wallet yang mendanai yang lain dan menjadi "
+                  "tujuan saat semua SOL ditarik balik.", "",
+              "Pilih untuk memindahkannya:"]
+    return "\n".join(lines)
+
+
+def render_sweep_plan(plan, balances_known: bool = True) -> str:
+    from slcw.solana import lamports_to_sol
+
+    lines = [f"<b>↩️ Tarik semua SOL ke {plan.destination_id}</b>", "",
+             f"<code>{html.escape(plan.destination_public_key)}</code>", ""]
+
+    if not plan.entries:
+        lines.append("Tidak ada wallet dengan saldo yang bisa ditarik.")
+        lines.append("")
+        lines.append("<i>Setiap wallet harus menyisakan cadangan rent-exempt "
+                     "(0.00089 SOL) plus biaya transaksi, jadi saldo di bawah "
+                     "itu tidak menghasilkan apa-apa.</i>")
+        return "\n".join(lines)
+
+    lines.append(f"<b>{plan.count} wallet</b> akan mengirim:")
+    for wallet, amount in plan.entries[:10]:
+        lines.append(f"  {wallet['id']} → {lamports_to_sol(amount):.6f} SOL")
+    if plan.count > 10:
+        lines.append(f"  <i>… dan {plan.count - 10} lagi</i>")
+    lines.append("")
+    lines.append(f"Total masuk: <b>{lamports_to_sol(plan.total_lamports):.6f} SOL</b>")
+    if plan.skipped:
+        lines.append(f"Dilewati (saldo terlalu kecil): {len(plan.skipped)} wallet")
+    lines.append("")
+    lines.append("<i>Transaksi on-chain tidak bisa dibatalkan.</i>")
+    return "\n".join(lines)
+
+
+def render_p2p_plan(source: dict, destination: dict, amount: float,
+                    balance_sol: float, affordable: bool) -> str:
+    lines = [
+        "<b>🔁 Kirim antar wallet</b>", "",
+        _kv("Dari", f"{source['id']} · {html.escape(str(source.get('nickname','')))}"),
+        _kv("Saldo", f"{balance_sol:.6f} SOL"),
+        _kv("Ke", f"{destination['id']} · "
+                  f"{html.escape(str(destination.get('nickname','')))}"),
+        f"<code>{html.escape(destination['public_key'])}</code>",
+        "",
+        _kv("Jumlah", f"<b>{amount:.6f} SOL</b>"),
+        "",
+    ]
+    lines.append("<i>Transaksi on-chain tidak bisa dibatalkan.</i>" if affordable
+                 else "❌ <b>Saldo tidak cukup</b> setelah biaya dan cadangan "
+                      "rent-exempt.")
+    return "\n".join(lines)
 
 
 def render_why(status: dict) -> str:

@@ -72,6 +72,27 @@ class TelegramBot:
         self.client.call_quietly("deleteMessage",
                                  {"chat_id": chat_id, "message_id": message_id})
 
+    def send_document(self, chat_id, filename: str, content: str,
+                      caption: str = "") -> int | None:
+        """Upload text as a file. Returns the message id, for later deletion."""
+        payload = self.client.upload(
+            "sendDocument",
+            {"chat_id": chat_id, "caption": caption[:1000], "parse_mode": "HTML"},
+            filename, content)
+        return ((payload or {}).get("result") or {}).get("message_id")
+
+    def delete_after(self, chat_id, message_id, seconds: int) -> None:
+        """Remove a message once the operator has had time to save it.
+
+        Runs on its own timer thread so the handler returns immediately and the
+        worker stays free for the next button press.
+        """
+        if not message_id:
+            return
+        timer = threading.Timer(seconds, self.delete, args=(chat_id, message_id))
+        timer.daemon = True
+        timer.start()
+
     # --- loop ------------------------------------------------------------
     def run(self) -> None:
         self.running = True
@@ -137,6 +158,10 @@ class TelegramBot:
             return self.handle_unlock(chat_id, message, text)
         if command == "/import":
             return self.handle_import(chat_id, message, text)
+        if command == "/send":
+            return self.handle_send_command(chat_id, text)
+        if command == "/sweep":
+            return self.handle_sweep_command(chat_id)
         if command in ("/start", "/menu", "/help"):
             return self.show_main(chat_id)
         if command == "/status":
@@ -453,6 +478,111 @@ class TelegramBot:
             return self.edit(chat_id, message_id, ui.NEW_WALLET_INTRO,
                              ui.new_wallet_menu())
 
+        if action == "tools":
+            return self.edit(chat_id, message_id, ui.WALLET_TOOLS_INTRO,
+                             ui.wallet_tools_menu())
+
+        # --- export -------------------------------------------------------
+        if action == "exportask":
+            return self.edit(chat_id, message_id,
+                             ui.render_export_warning(len(self.vault.wallets())),
+                             ui.export_confirm_menu())
+
+        if action == "exportgo":
+            return self.do_export(chat_id, message_id)
+
+        # --- send SOL -----------------------------------------------------
+        if action == "sendask":
+            return self.edit(chat_id, message_id,
+                             ui.render_send_ask(self.funded_wallets()),
+                             ui.send_amount_menu())
+
+        if action == "sendamt":
+            amount = float(parts[1]) if len(parts) > 1 else 0.0
+            funded = self.funded_wallets()
+            if not funded:
+                return self.edit(chat_id, message_id, ui.render_send_ask([]),
+                                 ui.wallet_tools_menu())
+            return self.edit(chat_id, message_id,
+                             f"<b>💸 {amount:g} SOL per wallet</b>\n\n"
+                             f"Pilih wallet yang membayar:",
+                             ui.send_source_menu(funded, amount))
+
+        if action == "sendsrc":
+            amount = float(parts[1]) if len(parts) > 1 else 0.0
+            source_id = parts[2] if len(parts) > 2 else ""
+            return self.preview_send(chat_id, message_id, amount, source_id)
+
+        if action == "sendgo":
+            amount = float(parts[1]) if len(parts) > 1 else 0.0
+            source_id = parts[2] if len(parts) > 2 else ""
+            return self.do_send(chat_id, message_id, amount, source_id)
+
+        if action == "manualhelp":
+            return self.edit(chat_id, message_id, ui.MANUAL_AMOUNT_HELP,
+                             ui.wallet_tools_menu())
+
+        # --- primary wallet ------------------------------------------------
+        if action == "primaryask":
+            summary = self.vault.public_summary()
+            return self.edit(chat_id, message_id, ui.render_primary(summary),
+                             ui.primary_picker_menu(summary))
+
+        if action == "primaryset":
+            target = parts[1] if len(parts) > 1 else ""
+            try:
+                self.vault.set_primary(target)
+            except KeyError:
+                return self.answer(callback_id, "Wallet tidak ditemukan")
+            summary = self.vault.public_summary()
+            return self.edit(chat_id, message_id, ui.render_primary(summary),
+                             ui.primary_picker_menu(summary))
+
+        # --- sweep back to primary -----------------------------------------
+        if action == "sweepask":
+            return self.preview_sweep(chat_id, message_id)
+
+        if action == "sweepgo":
+            return self.do_sweep(chat_id, message_id,
+                                 parts[1] if len(parts) > 1 else "")
+
+        # --- wallet to wallet ----------------------------------------------
+        if action == "p2pask":
+            funded = self.funded_wallets()
+            if not funded:
+                return self.edit(chat_id, message_id, ui.render_send_ask([]),
+                                 ui.wallet_tools_menu())
+            return self.edit(chat_id, message_id,
+                             "<b>🔁 Antar wallet</b>\n\nPilih wallet pengirim:",
+                             ui.p2p_source_menu(funded))
+
+        if action == "p2psrc":
+            source_id = parts[1] if len(parts) > 1 else ""
+            return self.edit(chat_id, message_id,
+                             f"<b>🔁 Dari {source_id}</b>\n\nPilih tujuan:",
+                             ui.p2p_dest_menu(source_id, self.vault.public_summary()))
+
+        if action == "p2pdst":
+            source_id = parts[1] if len(parts) > 1 else ""
+            destination_id = parts[2] if len(parts) > 2 else ""
+            return self.edit(
+                chat_id, message_id,
+                f"<b>🔁 {source_id} → {destination_id}</b>\n\nPilih jumlah:",
+                ui.amount_menu(f"wallet:p2pamt:{source_id}:{destination_id}"))
+
+        if action == "p2pamt":
+            source_id = parts[1] if len(parts) > 1 else ""
+            destination_id = parts[2] if len(parts) > 2 else ""
+            amount = float(parts[3]) if len(parts) > 3 else 0.0
+            return self.preview_p2p(chat_id, message_id, source_id,
+                                    destination_id, amount)
+
+        if action == "p2pgo":
+            amount = float(parts[1]) if len(parts) > 1 else 0.0
+            source_id = parts[2] if len(parts) > 2 else ""
+            destination_id = parts[3] if len(parts) > 3 else ""
+            return self.do_p2p(chat_id, message_id, amount, source_id, destination_id)
+
         if action == "importhelp":
             return self.edit(chat_id, message_id, ui.IMPORT_HELP, ui.new_wallet_menu())
 
@@ -500,6 +630,301 @@ class TelegramBot:
         self.edit(chat_id, message_id,
                   ui.render_wallet(wallet, self.fleet.status[wallet_id].to_dict()),
                   ui.wallet_detail(wallet_id, self.fleet.status[wallet_id].paused))
+
+    # --- wallet tools: keys and funds ------------------------------------
+    EXPORT_DELETE_SECONDS = 60
+
+    def do_export(self, chat_id, message_id) -> None:
+        """Send every private key as a JSON document, then delete it."""
+        from slcw import backup
+
+        wallets = self.vault.wallets()
+        if not wallets:
+            return self.edit(chat_id, message_id, "Belum ada wallet untuk diekspor.",
+                             ui.wallet_tools_menu())
+
+        payload = backup.export_payload(wallets, note="exported from Telegram")
+
+        # A backup nobody verified is a backup nobody has: re-derive every key
+        # and confirm it matches the public key stored beside it.
+        problems = backup.verify_payload(payload)
+        if problems:
+            return self.edit(
+                chat_id, message_id,
+                "❌ <b>Export dibatalkan</b>\n\nCadangan gagal diverifikasi:\n"
+                + "\n".join(f"  • {html.escape(p)}" for p in problems[:5]),
+                ui.wallet_tools_menu())
+
+        import json as _json
+        filename = backup.export_filename(len(wallets))
+        try:
+            sent_id = self.send_document(
+                chat_id, filename, _json.dumps(payload, indent=2),
+                caption=f"🔐 {len(wallets)} private key — dihapus dalam "
+                        f"{self.EXPORT_DELETE_SECONDS} detik")
+        except Exception as exc:
+            return self.edit(chat_id, message_id,
+                             f"❌ Gagal mengirim file: {html.escape(str(exc)[:150])}",
+                             ui.wallet_tools_menu())
+
+        self.delete_after(chat_id, sent_id, self.EXPORT_DELETE_SECONDS)
+        self.edit(chat_id, message_id,
+                  ui.render_export_sent(len(wallets), self.EXPORT_DELETE_SECONDS),
+                  ui.wallet_tools_menu())
+
+    def handle_send_command(self, chat_id, text: str) -> None:
+        """`/send <amount> [source] [destination]` — typed rather than tapped.
+
+        Everything the buttons can do is reachable here too, because a preset
+        list can never cover the amount someone actually wants.
+        """
+        from slcw import solana
+
+        if not self.vault.is_unlocked:
+            return self.send(chat_id, "🔐 Buka vault dulu: <code>/unlock passphrase</code>")
+
+        parts = text.split()
+        if len(parts) < 2:
+            return self.send(chat_id, ui.MANUAL_AMOUNT_HELP, ui.wallet_tools_menu())
+
+        try:
+            amount = solana.parse_amount(parts[1])
+        except ValueError as exc:
+            return self.send(chat_id, f"❌ {html.escape(str(exc))}")
+
+        primary = self.vault.primary()
+        source_id = parts[2] if len(parts) > 2 else (primary or {}).get("id", "")
+        destination_id = parts[3] if len(parts) > 3 else ""
+
+        if not self.vault.get(source_id):
+            return self.send(chat_id, f"❌ Wallet sumber <code>{html.escape(source_id)}</code> "
+                                      f"tidak ditemukan.")
+
+        if destination_id:
+            if not self.vault.get(destination_id):
+                return self.send(chat_id, f"❌ Wallet tujuan "
+                                          f"<code>{html.escape(destination_id)}</code> "
+                                          f"tidak ditemukan.")
+            return self.preview_p2p(chat_id, None, source_id, destination_id, amount)
+
+        message = self.send(chat_id, "Menghitung…")
+        message_id = ((message or {}).get("result") or {}).get("message_id")
+        self.preview_send(chat_id, message_id, amount, source_id)
+
+    def handle_sweep_command(self, chat_id) -> None:
+        if not self.vault.is_unlocked:
+            return self.send(chat_id, "🔐 Buka vault dulu: <code>/unlock passphrase</code>")
+        message = self.send(chat_id, "Menghitung…")
+        message_id = ((message or {}).get("result") or {}).get("message_id")
+        self.preview_sweep(chat_id, message_id)
+
+    # --- sweep: every wallet back to primary -----------------------------
+    def preview_sweep(self, chat_id, message_id) -> None:
+        from slcw import solana
+
+        primary = self.vault.primary()
+        if primary is None:
+            return self.edit(chat_id, message_id, "Belum ada wallet.",
+                             ui.wallet_tools_menu())
+
+        wallets = self.vault.wallets()
+        client = self.solana_client()
+        try:
+            balances = client.balances([w["public_key"] for w in wallets])
+        except Exception as exc:
+            return self.edit(chat_id, message_id,
+                             f"❌ RPC gagal: {html.escape(str(exc)[:150])}",
+                             ui.wallet_tools_menu())
+        finally:
+            client.close()
+
+        plan = solana.plan_sweep(wallets, primary, balances)
+        markup = (ui.sweep_confirm_menu(primary["id"]) if plan.entries
+                  else ui.wallet_tools_menu())
+        self.edit(chat_id, message_id, ui.render_sweep_plan(plan), markup)
+
+    def do_sweep(self, chat_id, message_id, destination_id: str) -> None:
+        from slcw import solana
+
+        destination = self.vault.get(destination_id)
+        if destination is None:
+            return self.edit(chat_id, message_id, "Wallet tujuan tidak ditemukan.",
+                             ui.wallet_tools_menu())
+
+        wallets = self.vault.wallets()
+        client = self.solana_client()
+        try:
+            # Balances are re-read rather than trusted from the preview; they
+            # can move between the render and the press.
+            balances = client.balances([w["public_key"] for w in wallets])
+            plan = solana.plan_sweep(wallets, destination, balances)
+            if not plan.entries:
+                return self.edit(chat_id, message_id, ui.render_sweep_plan(plan),
+                                 ui.wallet_tools_menu())
+            self.edit(chat_id, message_id,
+                      f"↩️ Menarik dari {plan.count} wallet…", None)
+            results = solana.execute_sweep(client, plan)
+        except Exception as exc:
+            return self.edit(chat_id, message_id,
+                             f"❌ Gagal: {html.escape(str(exc)[:200])}",
+                             ui.wallet_tools_menu())
+        finally:
+            client.close()
+
+        self.edit(chat_id, message_id, ui.render_send_results(results),
+                  ui.wallet_tools_menu())
+
+    # --- wallet to wallet -------------------------------------------------
+    def preview_p2p(self, chat_id, message_id, source_id: str,
+                    destination_id: str, amount: float) -> None:
+        from slcw import solana
+
+        source = self.vault.get(source_id)
+        destination = self.vault.get(destination_id)
+        if source is None or destination is None:
+            return self.send(chat_id, "Wallet tidak ditemukan.")
+
+        client = self.solana_client()
+        try:
+            balance = client.balance(source["public_key"])
+        except Exception as exc:
+            return self.send(chat_id, f"❌ RPC gagal: {html.escape(str(exc)[:150])}")
+        finally:
+            client.close()
+
+        needed = (solana.sol_to_lamports(amount) + solana.BASE_FEE_LAMPORTS
+                  + solana.RENT_EXEMPT_LAMPORTS)
+        affordable = balance >= needed
+        text = ui.render_p2p_plan(source, destination, amount,
+                                  solana.lamports_to_sol(balance), affordable)
+        markup = (ui.keyboard([
+            [("⚠️ Ya, kirim", f"wallet:p2pgo:{amount:g}:{source_id}:{destination_id}")],
+            [("✖️ Batal", "wallet:tools")]]) if affordable else ui.wallet_tools_menu())
+
+        if message_id:
+            self.edit(chat_id, message_id, text, markup)
+        else:
+            self.send(chat_id, text, markup)
+
+    def do_p2p(self, chat_id, message_id, amount: float, source_id: str,
+               destination_id: str) -> None:
+        from slcw import solana
+        from solders.keypair import Keypair
+
+        source = self.vault.get(source_id)
+        destination = self.vault.get(destination_id)
+        if source is None or destination is None:
+            return self.edit(chat_id, message_id, "Wallet tidak ditemukan.",
+                             ui.wallet_tools_menu())
+
+        client = self.solana_client()
+        try:
+            balance = client.balance(source["public_key"])
+            lamports = solana.sol_to_lamports(amount)
+            if balance < lamports + solana.BASE_FEE_LAMPORTS + solana.RENT_EXEMPT_LAMPORTS:
+                return self.edit(chat_id, message_id,
+                                 "❌ Saldo tidak cukup lagi — mungkin berubah "
+                                 "sejak konfirmasi.", ui.wallet_tools_menu())
+            signature = client.send_sol(
+                Keypair.from_base58_string(source["private_key"]),
+                destination["public_key"], lamports)
+        except Exception as exc:
+            return self.edit(chat_id, message_id,
+                             f"❌ Gagal: {html.escape(str(exc)[:200])}",
+                             ui.wallet_tools_menu())
+        finally:
+            client.close()
+
+        self.edit(chat_id, message_id,
+                  f"✅ <b>{amount:g} SOL</b> terkirim\n"
+                  f"{source_id} → {destination_id}\n\n"
+                  f"<code>{html.escape(signature)}</code>",
+                  ui.wallet_tools_menu())
+
+    def solana_client(self):
+        from slcw.solana import SolanaClient
+        return SolanaClient(self.config.solana_rpc)
+
+    def funded_wallets(self) -> list:
+        """Wallets holding enough SOL to be worth offering as a source."""
+        from slcw.solana import RENT_EXEMPT_LAMPORTS, lamports_to_sol
+
+        wallets = self.vault.wallets()
+        if not wallets:
+            return []
+        client = self.solana_client()
+        try:
+            balances = client.balances([w["public_key"] for w in wallets])
+        except Exception:
+            return []
+        finally:
+            client.close()
+
+        funded = []
+        for wallet in wallets:
+            lamports = balances.get(wallet["public_key"], 0)
+            if lamports > RENT_EXEMPT_LAMPORTS:
+                funded.append({**wallet, "balance_lamports": lamports,
+                               "balance_sol": lamports_to_sol(lamports)})
+        return sorted(funded, key=lambda w: -w["balance_lamports"])
+
+    def build_plan(self, amount: float, source_id: str):
+        from slcw import solana
+
+        source = self.vault.get(source_id)
+        if source is None:
+            return None, None
+        client = self.solana_client()
+        try:
+            balance = client.balance(source["public_key"])
+        finally:
+            client.close()
+        plan = solana.plan_distribution(source, self.vault.wallets(), amount, balance)
+        return source, plan
+
+    def preview_send(self, chat_id, message_id, amount: float, source_id: str) -> None:
+        source, plan = self.build_plan(amount, source_id)
+        if plan is None:
+            return self.edit(chat_id, message_id, "Wallet sumber tidak ditemukan.",
+                             ui.wallet_tools_menu())
+
+        markup = (ui.send_confirm_menu(amount, source_id) if plan.affordable
+                  else ui.wallet_tools_menu())
+        self.edit(chat_id, message_id,
+                  ui.render_send_plan(plan, source.get("nickname", "")), markup)
+
+    def do_send(self, chat_id, message_id, amount: float, source_id: str) -> None:
+        """Execute the fan-out. The plan is rebuilt and re-checked first.
+
+        Balances can change between the preview and the press, so the numbers
+        are taken again rather than trusted from the button.
+        """
+        from slcw import solana
+
+        source, plan = self.build_plan(amount, source_id)
+        if plan is None:
+            return self.edit(chat_id, message_id, "Wallet sumber tidak ditemukan.",
+                             ui.wallet_tools_menu())
+        if not plan.affordable:
+            return self.edit(chat_id, message_id,
+                             ui.render_send_plan(plan, source.get("nickname", "")),
+                             ui.wallet_tools_menu())
+
+        self.edit(chat_id, message_id,
+                  f"💸 Mengirim ke {plan.count} wallet…", None)
+
+        client = self.solana_client()
+        try:
+            results = solana.execute_distribution(client, source, plan)
+        except Exception as exc:
+            return self.edit(chat_id, message_id,
+                             f"❌ Pengiriman gagal: {html.escape(str(exc)[:200])}",
+                             ui.wallet_tools_menu())
+        finally:
+            client.close()
+
+        self.edit(chat_id, message_id, ui.render_send_results(results),
+                  ui.wallet_tools_menu())
 
     def route_vault(self, chat_id, message_id, callback_id, parts) -> None:
         action = parts[0] if parts else ""

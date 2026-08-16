@@ -6,7 +6,7 @@
 
 [![tests](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml/badge.svg)](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml)
 [![python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab?logo=python&logoColor=white)](https://www.python.org/)
-[![tests](https://img.shields.io/badge/tests-439%20passing-4c1)](tests/)
+[![tests](https://img.shields.io/badge/tests-484%20passing-4c1)](tests/)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 Every action is priced in gold-per-hour before it runs.
@@ -41,6 +41,13 @@ Either way the installer detects your package manager, installs prerequisites,
 builds an isolated virtualenv, installs pinned dependencies, and hands over to the
 setup wizard. `SLCW_HOME=/opt/slcw` installs elsewhere; `SLCW_REPO=<url>` installs
 a fork.
+
+> [!NOTE]
+> **Re-running updates in place.** On a machine that already has credentials and a
+> vault, the same command pulls the new source, reinstalls dependencies, runs the
+> test suite, and restarts the service — no wizard, no second wallet. If the tests
+> fail the service is left on the previous code. A dirty working tree is never
+> touched: the pull is skipped and your uncommitted files stay exactly as they are.
 
 **Requirements:** Linux with systemd, Python 3.11+, root. All four Python
 dependencies ship prebuilt wheels, so no compiler is needed.
@@ -335,6 +342,34 @@ hidden prompt that keeps the secret out of shell history. Accepted formats:
 Each wallet gets its own browser persona, session, error counter, schedule, and a
 persistent 6–9 hour daily offline window. A failing wallet pauses **itself** and
 leaves the rest of the fleet running.
+
+### Wallet tools
+
+The first wallet added becomes the **primary** — the one that funds the others and
+receives them back. 👑 moves the flag whenever you like.
+
+| Tool | Does |
+|---|---|
+| 📤 **Export** | every private key as a JSON file, auto-deleted from the chat after 60s |
+| 💸 **Primary → semua** | fan out a fixed amount to every other wallet |
+| ↩️ **Semua → primary** | sweep every spare lamport back to the primary |
+| 🔁 **Antar wallet** | one wallet to one wallet |
+
+Amounts are preset buttons or typed by hand — `/send 0.02`, `/send 0.02 wallet-03`,
+`/send 0.02 wallet-03 wallet-07`, `/sweep`. A comma decimal is accepted, because
+misreading `0,02` as `2` would move a hundred times too much.
+
+Every transfer shows the exact amounts, recipients, fees and remaining balance
+before anything is signed, and the balance is **re-read at the moment you confirm**
+rather than trusted from the preview. Sweeps leave the rent-exempt minimum and the
+signature fee behind so no account is stranded. A failed transfer in a batch is
+reported individually and is safe to retry — it never partially sent.
+
+> [!WARNING]
+> These two tools are the only place the bot touches keys or funds, and they change
+> its security posture. Everything else here cannot move money at all; with these
+> enabled, a leaked bot token means every wallet can be exported and drained from
+> the chat. `./slcwctl export` on the host avoids putting keys on the wire at all.
 
 ---
 

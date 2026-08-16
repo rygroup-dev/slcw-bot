@@ -56,12 +56,44 @@ say "Python $(python3 -c 'import platform; print(platform.python_version())') ok
 command -v systemctl >/dev/null 2>&1 || warn "systemd not found; the daemon unit will be skipped"
 
 # --- source ---------------------------------------------------------------
+FRESH_CLONE=0
 if [ ! -f "$INSTALL_DIR/daemon.py" ]; then
   [ -n "$REPO" ] || die "$INSTALL_DIR has no daemon.py. Set SLCW_REPO=<git-url> to clone it."
   say "Cloning $REPO into $INSTALL_DIR"
-  git clone --depth 1 "$REPO" "$INSTALL_DIR"
+  git clone "$REPO" "$INSTALL_DIR"
+  FRESH_CLONE=1
 fi
 cd "$INSTALL_DIR"
+
+# An install that already has credentials and a vault is an update, not a first
+# run. Re-running the wizard there would ask for things already answered and
+# risks a second wallet nobody wanted.
+CONFIGURED=0
+if [ "$FRESH_CLONE" -eq 0 ] && [ -f .env ] && [ -f data/wallets.enc ] \
+   && grep -qs '^TELEGRAM_BOT_TOKEN=.\+' .env; then
+  CONFIGURED=1
+fi
+
+if [ "$CONFIGURED" -eq 1 ] && [ -d .git ]; then
+  say "Existing install detected — updating source only"
+
+  # Never touch a dirty working tree. Stashing here would move someone's
+  # uncommitted work out from under them, and an installer is exactly the
+  # program you least expect to do that.
+  if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
+    warn "uncommitted changes present — skipping the pull, your files are untouched"
+    say "Commit or stash them yourself, then re-run to pick up the update."
+  else
+    BEFORE="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    git pull --rebase --quiet || warn "git pull failed; keeping the current tree"
+    AFTER="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    if [ "$BEFORE" = "$AFTER" ]; then
+      say "Already at the latest commit ($AFTER)"
+    else
+      say "Updated $BEFORE → $AFTER"
+    fi
+  fi
+fi
 
 # --- virtualenv -----------------------------------------------------------
 # Deliberately inside the project. An earlier deployment kept its venv in /tmp,
@@ -76,6 +108,39 @@ say "Dependencies installed:"
 .venv/bin/pip list 2>/dev/null | grep -iE '^(curl_cffi|solders|base58|cryptography) ' | sed 's/^/    /'
 
 chmod +x slcwctl install.sh 2>/dev/null || true
+
+# --- update path: no wizard, just restart --------------------------------
+if [ "$CONFIGURED" -eq 1 ]; then
+  echo
+  say "Running the test suite"
+  if .venv/bin/python -m unittest discover -s tests -t . >/dev/null 2>&1; then
+    say "Tests pass"
+  else
+    warn "tests failed — the service was left running on the previous code"
+    say "Investigate with: cd $INSTALL_DIR && .venv/bin/python -m unittest discover -s tests -t ."
+    exit 1
+  fi
+
+  if command -v systemctl >/dev/null 2>&1 \
+     && systemctl list-unit-files slcw-fleet.service >/dev/null 2>&1; then
+    cp -f slcw-fleet.service /etc/systemd/system/ 2>/dev/null || true
+    systemctl daemon-reload
+    systemctl restart slcw-fleet
+    sleep 3
+    state="$(systemctl is-active slcw-fleet || true)"
+    if [ "$state" = "active" ]; then
+      say "slcw-fleet restarted and running"
+    else
+      warn "slcw-fleet is $state — check: journalctl -u slcw-fleet -n 50"
+    fi
+  fi
+
+  echo
+  say "Update complete. Wallets and credentials were left untouched."
+  printf '\n    Wallets:  %s\n    Logs:     journalctl -u slcw-fleet -f\n\n' \
+    "$(ls data/wallets.enc >/dev/null 2>&1 && echo 'vault intact' || echo 'none')"
+  exit 0
+fi
 
 # --- hand over to the wizard ---------------------------------------------
 echo
