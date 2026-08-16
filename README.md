@@ -6,7 +6,7 @@
 
 [![tests](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml/badge.svg)](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml)
 [![python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab?logo=python&logoColor=white)](https://www.python.org/)
-[![tests](https://img.shields.io/badge/tests-304%20passing-4c1)](tests/)
+[![tests](https://img.shields.io/badge/tests-347%20passing-4c1)](tests/)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 Every action is priced in gold-per-hour before it runs.
@@ -79,8 +79,9 @@ flooding the chat with stale snapshots.
 ┌─────────────────────────────┐        ⚗️ Ekonomi
 │  📊 Status      💰 Profit   │        ├── 🔗 Rantai profit
 │  🏪 Market      ⚗️ Ekonomi  │        ├── 🌾 Gathering
-│  ⚔️ Combat      👛 Wallets  │        ├── ⚗️ Refining
-│  ⚙️ Kontrol     🔐 Vault    │        └── ⚡ Energi
+│  ⚔️ Combat      🎯 Task     │        ├── ⚗️ Refining
+│  👛 Wallets     🗺 Peta     │        ├── ⚡ Energi
+│  ⚙️ Kontrol     🔐 Vault    │        └── 🗺 Peta
 └─────────────────────────────┘
 ```
 
@@ -93,6 +94,8 @@ flooding the chat with stale snapshots.
 | **🌾 Gathering** | what every gathering site would pay, both funding modes |
 | **⚗️ Refining** | per-workshop feasibility and exactly what each run is short of |
 | **⚡ Energi** | free refill quota per wallet — three a day, easy to leave unused |
+| **🗺 Peta** | where each wallet stands and how far every useful destination is |
+| **🎯 Task** | hunt-ladder progress, reward, and why it may be locked |
 | **⚔️ Combat** | the learned per-monster model — which zones it blocks and attacks |
 | **👛 Wallets** | per-wallet detail, pause/resume, force cycle, **🧠 Kenapa?** |
 | **⚙️ Kontrol** | resume, pause, force cycle, dry-run toggle, logs, doctor |
@@ -129,6 +132,8 @@ and takes the best.
 | `claimInitialReward` | **∞** — free |
 | `spendAttributePoints` | **∞** — free progression |
 | `refillEnergyFree` | **∞** — three a day, free, and energy gates everything |
+| `claimTaskReward`, `acceptTask` | **∞** — free gold from the hunt ladder |
+| `startTravel` | the destination's best action, amortised over travel time |
 | `startRefining` | output × live best bid − gold cost |
 | `purchaseCraftingItem` | the refining run it unlocks − its own cost |
 | `startProduction` | 1,000 gold per 18 minutes for 10 energy |
@@ -168,6 +173,25 @@ table, and the bid from the live order book.
 Catalysts are the one input that cannot be gathered or traded, so when they are the
 only thing blocking a profitable run the engine buys them — scored by the value of
 the run they unlock, not as a bare outflow.
+
+### It walks the chain by itself
+
+Gathering happens at farm zones and refining in city workshops, so a wallet that
+never moves is limited to whatever its current tile offers. The engine evaluates
+every economically meaningful destination, prices its best action, and **amortises
+that over the travel time** it would cost to get there:
+
+```
+at Crystal Cave, holding 900 copper_ore
+  → startTravel   193,829 g/h   travel 5m to Agnos for startRefining
+at Agnos
+  → startRefining 317,880 g/h   50× copper_ingot from 450 ore + 50 flux + 250g
+```
+
+Travel time follows the client's own formula — 20 seconds per unit of map distance,
+less any mount bonus. A destination must beat staying put by `SLCW_TRAVEL_MARGIN`
+(1.35× by default) before the trip is taken, because travel time is dead time and a
+marginal gain does not repay it.
 
 ### It refuses to lose money
 
@@ -295,6 +319,8 @@ See [`.env.example`](.env.example) for the annotated full list.
 | `SLCW_MAX_ERRORS` | `3` | consecutive real errors before a wallet self-pauses |
 | `SLCW_REST_HP_RATIO` | `0.55` | rest below this fraction of health |
 | `SLCW_GOLD_RESERVE` | `500` | gold-funded actions never spend below this |
+| `SLCW_AUTO_TRAVEL` | `true` | let the engine relocate along the production chain |
+| `SLCW_TRAVEL_MARGIN` | `1.35` | how much better a destination must be before moving |
 | `SLCW_RICH_DROP_GOLD` | `2000` | drop value that triggers an alert |
 
 ### Administration
@@ -328,6 +354,9 @@ daemon.py                 fleet + control plane in one process
 │   ├── model.py          player state, timestamp normalisation
 │   ├── market.py         order book, valuation, crossed detection
 │   ├── farming.py        gathering catalog and cost model
+│   ├── refining.py       workshops, recipes, catalyst shops
+│   ├── world.py          map, distances, travel times
+│   ├── tasks.py          hunt-task ladder
 │   ├── combat.py         learned per-monster zone strategy
 │   ├── economy.py        expected-value scoring
 │   ├── orchestrator.py   choose, execute, record why

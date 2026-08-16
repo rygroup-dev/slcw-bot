@@ -88,6 +88,20 @@ class GameApi:
         """Payload shape is built by slcw.refining.Recipe.payload."""
         return self._call(session, "startRefining", payload)
 
+    # --- hunt tasks, all argument-free ----------------------------------
+    def get_task_status(self, session):
+        from .tasks import parse_status
+        return parse_status(self._call(session, "getTaskStatus"))
+
+    def accept_task(self, session) -> dict:
+        return self._call(session, "acceptTask")
+
+    def start_task_battle(self, session) -> dict:
+        return self._call(session, "startTaskBattle")
+
+    def claim_task_reward(self, session) -> dict:
+        return self._call(session, "claimTaskReward")
+
     def purchase_crafting_item(self, session, payload: dict) -> dict:
         """Buy refining catalysts for gold. Payload from refining.catalyst_payload."""
         return self._call(session, "purchaseCraftingItem", payload)

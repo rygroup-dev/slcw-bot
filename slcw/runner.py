@@ -14,7 +14,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 
-from . import ledger, market as market_mod, scheduler
+from . import ledger, market as market_mod, scheduler, tasks
 from .api import GameApi
 from .auth import AuthError, SessionManager
 from .config import DATA, Config
@@ -63,6 +63,8 @@ class Fleet:
         self.status: dict = {}
         self.market: MarketSnapshot = market_mod.load_snapshot()
         self.force_flags: dict = {}
+        # Most recent hunt-task status seen, for the Telegram view.
+        self.last_task_status = None
         self._threads: dict = {}
         self._stop = threading.Event()
         self._lock = threading.Lock()
@@ -193,9 +195,21 @@ class Fleet:
             except (TransportError, ApiError):
                 holdings = {}
 
+            # Hunt tasks only exist from level 10, so below that the call is
+            # a guaranteed round trip for nothing.
+            task_status = None
+            if state.level >= tasks.MIN_LEVEL:
+                try:
+                    task_status = api.get_task_status(session)
+                except (TransportError, ApiError):
+                    task_status = None
+
+            if task_status is not None:
+                self.last_task_status = task_status
+
             orchestrator = Orchestrator(config=self.config, api=api, rng=rng)
             decision = orchestrator.decide_and_act(
-                wallet, session, state, self.market, holdings)
+                wallet, session, state, self.market, holdings, task_status)
 
             status.last_run_ts = int(time.time())
             status.last_action = decision.action

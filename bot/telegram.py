@@ -287,6 +287,12 @@ class TelegramBot:
         elif view == "energy":
             self.edit(chat_id, message_id, ui.render_energy(self.fleet_state()),
                       ui.economy_menu())
+        elif view == "map":
+            self.edit(chat_id, message_id, ui.render_map(self.fleet_state()),
+                      ui.economy_menu())
+        elif view == "tasks":
+            self.edit(chat_id, message_id,
+                      ui.render_tasks(self.fleet.last_task_status), ui.main_menu())
         elif view == "combat":
             self.edit(chat_id, message_id, ui.render_combat(self.combat_memory()),
                       ui.main_menu())

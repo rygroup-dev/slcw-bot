@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import random
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from . import economy as econ
-from . import farming, refining
+from . import farming, refining, world
 from .combat import CombatMemory, select_monster
 from .config import Config
 from .guardrails import GuardrailViolation
@@ -87,11 +87,12 @@ class Orchestrator:
     rng: random.Random = field(default_factory=random.Random)
 
     def decide_and_act(self, wallet: dict, session, state, market=None,
-                       holdings=None) -> Decision:
+                       holdings=None, task_status=None) -> Decision:
         decision = Decision(wallet_id=wallet["id"], dry_run=self.config.dry_run)
 
         try:
-            candidates = self.build_candidates(state, market, holdings)
+            candidates = self.build_candidates(
+                state, market, holdings, task_status=task_status)
             decision.considered = candidates
             if not candidates:
                 decision.action = "idle"
@@ -121,7 +122,8 @@ class Orchestrator:
         return decision
 
     # --- candidate generation -------------------------------------------
-    def build_candidates(self, state, market=None, holdings=None) -> list:
+    def build_candidates(self, state, market=None, holdings=None,
+                         include_travel: bool = True, task_status=None) -> list:
         # Free value first: an expired activity is reward already earned, and
         # unclaimed level rewards cost nothing.
         if state.activity is not None and state.activity.is_expired:
@@ -149,6 +151,18 @@ class Orchestrator:
         if (state.free_refills_left() > 0
                 and state.energy <= state.max_energy * ENERGY_REFILL_RATIO):
             return [econ.energy_refill_candidate(state)]
+
+        # A finished hunt task is gold sitting there; accepting the next one is free.
+        if task_status is not None and task_status.eligible:
+            if task_status.can_claim:
+                return [econ.free_candidate(
+                    "claimTaskReward", {},
+                    f"task reward of {task_status.task.gold_reward:,} gold ready")]
+            if task_status.can_accept:
+                return [econ.free_candidate(
+                    "acceptTask", {},
+                    f"next hunt task available "
+                    f"({task_status.completed_count} completed)")]
 
         candidates = []
         stale = market is None or not market.is_fresh(self.config.market_ttl_seconds)
@@ -221,7 +235,69 @@ class Orchestrator:
         # low it is a prerequisite, not a trade.
         profitable = [c for c in scored
                       if c.score > 0 or (c.action == "startRelax" and needs_rest)]
+
+        if include_travel and self.config.auto_travel:
+            local_best = max((c.score for c in profitable), default=0.0)
+            relocation = self._travel_candidate(
+                state, market, holdings, local_best)
+            if relocation is not None:
+                profitable.append(relocation)
+
         return econ.rank(profitable)
+
+    def _travel_candidate(self, state, market, holdings, local_best: float):
+        """Consider moving to wherever the next action is worth more.
+
+        Gathering happens at farm zones and refining in city workshops, so a
+        wallet that never moves is limited to whatever its current location
+        offers. Each destination is valued by its best action amortised over the
+        travel time it costs to get there, which is what stops the engine
+        crossing the map for a marginal gain.
+        """
+        best = None
+        for destination in world.economic_locations():
+            if destination == state.location_id:
+                continue
+
+            seconds = world.travel_seconds(state.location_id, destination)
+            if seconds == float("inf"):
+                continue
+
+            elsewhere = replace(state, location_id=destination, activity=None)
+            remote = self.build_candidates(
+                elsewhere, market, holdings, include_travel=False)
+            if not remote:
+                continue
+
+            target = remote[0]
+            total_hours = (seconds + target.duration_seconds) / 3600.0
+            if total_hours <= 0:
+                continue
+            amortised = (target.gold_equivalent - target.gold_cost) / total_hours
+
+            if best is None or amortised > best[0]:
+                best = (amortised, destination, target, seconds)
+
+        if best is None:
+            return None
+
+        amortised, destination, target, seconds = best
+        # Only move when the payoff clearly beats staying put; travel time is
+        # dead time and a marginal gain does not justify it.
+        if amortised <= local_best * self.config.travel_margin:
+            return None
+
+        return econ.ActionScore(
+            action="startTravel",
+            params={"destinationId": destination},
+            gold_equivalent=target.gold_equivalent - target.gold_cost,
+            energy_cost=0,
+            duration_seconds=seconds,
+            score=amortised,
+            reason=(f"travel {int(seconds) // 60}m to {world.name_of(destination)} "
+                    f"for {target.action} ({amortised:,.0f} g/h after travel)"),
+            degraded=target.degraded,
+        )
 
     def _catalyst_candidate(self, workshop, state, holdings: dict, spendable: int,
                             market, stale: bool):
@@ -298,6 +374,12 @@ class Orchestrator:
             return self.api.refill_energy_free(session)
         if action == "purchaseCraftingItem":
             return self.api.purchase_crafting_item(session, candidate.params)
+        if action == "startTravel":
+            return self.api.start_travel(session, candidate.params["destinationId"])
+        if action == "acceptTask":
+            return self.api.accept_task(session)
+        if action == "claimTaskReward":
+            return self.api.claim_task_reward(session)
         if action == "battle":
             return self.run_battle(session, candidate.params["monsterId"])
         raise GuardrailViolation(f"orchestrator has no executor for {action!r}")

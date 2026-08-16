@@ -297,3 +297,41 @@ class ConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MapAndTaskViewTests(unittest.TestCase):
+    def test_map_view_lists_distances_from_each_wallet(self):
+        state = {"wallets": {"wallet-01": {
+            "nickname": "n", "state": {"location": "farm_2"}}}}
+        text = ui.render_map(state)
+        self.assertIn("Crystal Cave", text)
+        # city_1 hosts the smelter that consumes what farm_2 gathers.
+        self.assertIn("Agnos", text)
+        self.assertIn("smelting", text)
+
+    def test_map_view_handles_unknown_position(self):
+        self.assertIn("Belum ada", ui.render_map({"wallets": {}}))
+
+    def test_map_view_fits_a_telegram_message(self):
+        state = {"wallets": {f"wallet-{i:02d}": {
+            "nickname": "n", "state": {"location": "farm_2"}} for i in range(1, 9)}}
+        self.assertLess(len(ui.render_map(state)), 4000)
+
+    def test_task_view_explains_the_level_gate(self):
+        from slcw import tasks
+        status = tasks.parse_status({"playerLevel": 4})
+        self.assertIn("level 10", ui.render_tasks(status))
+
+    def test_task_view_shows_progress(self):
+        from slcw import tasks
+        status = tasks.parse_status({
+            "playerLevel": 12, "completedCount": 2, "hasActiveTask": True,
+            "task": {"taskIndex": 1, "monsterId": "forestspider_lvl1_2",
+                     "monsterLevel": 1, "killsRequired": 10, "killsProgress": 7,
+                     "status": "active", "goldReward": 5000}})
+        text = ui.render_tasks(status)
+        self.assertIn("7/10", text)
+        self.assertIn("5,000 gold", text)
+
+    def test_task_view_without_data(self):
+        self.assertIn("Belum ada data", ui.render_tasks(None))

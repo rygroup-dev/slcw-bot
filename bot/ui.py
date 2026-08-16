@@ -17,7 +17,8 @@ def main_menu() -> str:
     return keyboard([
         [("📊 Status", "nav:status"), ("💰 Profit", "nav:profit")],
         [("🏪 Market", "nav:market"), ("⚗️ Ekonomi", "nav:economy")],
-        [("⚔️ Combat", "nav:combat"), ("👛 Wallets", "wallet:list")],
+        [("⚔️ Combat", "nav:combat"), ("🎯 Task", "nav:tasks")],
+        [("👛 Wallets", "wallet:list"), ("🗺 Peta", "nav:map")],
         [("⚙️ Kontrol", "nav:control"), ("🔐 Vault", "nav:vault")],
         [("🔄 Refresh", "nav:status")],
     ])
@@ -27,7 +28,7 @@ def economy_menu() -> str:
     return keyboard([
         [("🔗 Rantai profit", "nav:chain")],
         [("🌾 Gathering", "nav:farming"), ("⚗️ Refining", "nav:refining")],
-        [("⚡ Energi", "nav:energy")],
+        [("⚡ Energi", "nav:energy"), ("🗺 Peta", "nav:map")],
         back_row(),
     ])
 
@@ -433,6 +434,92 @@ def render_energy(fleet_state: dict) -> str:
     lines.append("<i>Bot menunggu bar turun di bawah 35% sebelum memakai refill, "
                  "supaya satu jatah tidak terbuang untuk beberapa poin saja. "
                  "Refill berbayar (99×2ⁿ diamond) diblokir permanen.</i>")
+    return "\n".join(lines)
+
+
+def render_map(fleet_state: dict) -> str:
+    """Where each wallet is, and how far the useful destinations are from there."""
+    from slcw import refining, world
+
+    wallets = fleet_state.get("wallets", {})
+    lines = ["<b>🗺 Peta</b>", ""]
+
+    for wallet_id, status in sorted(wallets.items()):
+        here = (status.get("state") or {}).get("location", "")
+        if not here:
+            continue
+        lines.append(f"<b>{wallet_id}</b> di {html.escape(world.name_of(here))} "
+                     f"<code>{html.escape(here)}</code>")
+        targets = []
+        for destination in world.economic_locations():
+            if destination == here:
+                continue
+            seconds = world.travel_seconds(here, destination)
+            if seconds == float("inf"):
+                continue
+            targets.append((seconds, destination))
+        for seconds, destination in sorted(targets)[:4]:
+            purpose = _purpose_of(destination, refining)
+            lines.append(f"   {int(seconds) // 60}m {int(seconds) % 60:02d}s → "
+                         f"{html.escape(world.name_of(destination))} · {purpose}")
+        lines.append("")
+
+    if len(lines) <= 2:
+        return "Belum ada posisi wallet. Tunggu siklus pertama."
+
+    lines.append("<i>Waktu tempuh = 20 detik per satuan jarak, dikurangi bonus "
+                 "tunggangan. Bot hanya pindah kalau nilai di tujuan mengalahkan "
+                 "tinggal di tempat setelah dibagi waktu perjalanan.</i>")
+    return "\n".join(lines)
+
+
+def _purpose_of(location_id: str, refining) -> str:
+    from slcw import farming
+
+    workshop = refining.workshop_at(location_id)
+    if workshop:
+        return f"⚗️ {workshop.id}"
+    if location_id in farming.FARM_LOCATIONS:
+        return f"🌾 {farming.FARM_LOCATIONS[location_id]['profession']}"
+    if location_id == "city_2":
+        return "🏭 produksi"
+    if location_id == "farm_3":
+        return "⚔️ battle"
+    return "—"
+
+
+def render_tasks(status) -> str:
+    """Hunt-task ladder state, or why it is not available yet."""
+    from slcw import tasks
+
+    if status is None:
+        return ("<b>🎯 Hunt task</b>\n\n"
+                f"Belum ada data. Task baru terbuka di level {tasks.MIN_LEVEL}, "
+                f"jadi bot belum menanyakannya ke server.")
+
+    if status.player_level < tasks.MIN_LEVEL:
+        return (f"<b>🎯 Hunt task</b>\n\n"
+                f"Terkunci sampai level {tasks.MIN_LEVEL} "
+                f"(sekarang level {status.player_level}).")
+
+    if status.all_done:
+        return (f"<b>🎯 Hunt task</b>\n\n"
+                f"Semua task selesai — {status.completed_count} total.")
+
+    lines = [f"<b>🎯 Hunt task</b> · {status.completed_count} selesai", ""]
+    task = status.task
+    if task is None:
+        lines.append("Tidak ada task aktif. Bot akan mengambil yang berikutnya.")
+        return "\n".join(lines)
+
+    lines.append(f"Target: {html.escape(task.monster_id)} (lv{task.monster_level})")
+    lines.append(f"Progres: {_bar(task.kills_progress, task.kills_required)} "
+                 f"{task.kills_progress}/{task.kills_required}")
+    lines.append(f"Hadiah: <b>{task.gold_reward:,} gold</b> "
+                 f"({task.gold_per_kill:,.0f}/kill)")
+    lines.append(f"Status: {html.escape(task.status)}")
+    if status.can_claim:
+        lines.append("\n✅ Siap diklaim — bot mengambilnya di siklus berikutnya.")
     return "\n".join(lines)
 
 

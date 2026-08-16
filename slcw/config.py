@@ -78,6 +78,11 @@ class Config:
     gold_reserve: int = field(default_factory=lambda: _int("SLCW_GOLD_RESERVE", 500))
     # Optional home location the fleet travels back to when idle elsewhere.
     home_location: str = field(default_factory=lambda: os.environ.get("SLCW_HOME_LOCATION", ""))
+    # Let the engine relocate between gathering sites and workshop cities.
+    auto_travel: bool = field(default_factory=lambda: _bool("SLCW_AUTO_TRAVEL", True))
+    # A destination must beat staying put by this multiple before travelling.
+    # Travel time is dead time, so a marginal gain does not justify the trip.
+    travel_margin: float = field(default_factory=lambda: _float("SLCW_TRAVEL_MARGIN", 1.35))
     # Item drops worth at least this much (at best bid) raise a Telegram alert.
     rich_drop_gold: int = field(default_factory=lambda: _int("SLCW_RICH_DROP_GOLD", 2000))
 
@@ -103,6 +108,8 @@ class Config:
             problems.append("SLCW_REST_HP_RATIO must be between 0 and 1")
         if not 1 <= self.farming_gold_hours <= 8:
             problems.append("SLCW_FARMING_GOLD_HOURS must be between 1 and 8")
+        if self.travel_margin < 1.0:
+            problems.append("SLCW_TRAVEL_MARGIN below 1.0 would travel for a loss")
         return problems
 
 
