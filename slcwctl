@@ -1,0 +1,215 @@
+#!/usr/bin/env python3
+"""Command-line administration for the SLCW bot.
+
+Usage:
+  slcwctl setup         Interactive first-run setup (credentials, vault, wallet, service)
+  slcwctl init          Create the vault and migrate any plaintext wallets.json
+  slcwctl list          List wallets (public keys only)
+  slcwctl new [N]       Generate N new wallets
+  slcwctl import        Import an existing wallet (secret read from a prompt)
+  slcwctl doctor        Check configuration and environment health
+  slcwctl once <id>     Run one cycle for a wallet and print the decision
+  slcwctl why <id>      Show the last recorded decision rationale
+"""
+from __future__ import annotations
+
+import getpass
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from slcw import config as config_mod  # noqa: E402
+from slcw.api import GameApi  # noqa: E402
+from slcw.auth import SessionManager  # noqa: E402
+from slcw.orchestrator import Orchestrator  # noqa: E402
+from slcw.transport import Transport  # noqa: E402
+from slcw.vault import Vault, VaultError  # noqa: E402
+
+
+def unlock(vault: Vault) -> str:
+    passphrase = getpass.getpass("Vault passphrase: ")
+    try:
+        count = vault.unlock(passphrase)
+    except VaultError as exc:
+        sys.exit(f"error: {exc}")
+    print(f"vault unlocked: {count} wallet(s)")
+    return passphrase
+
+
+def cmd_init() -> int:
+    vault = Vault()
+    if vault.exists:
+        print("vault already exists")
+        passphrase = unlock(vault)
+    else:
+        passphrase = getpass.getpass("New vault passphrase: ")
+        confirm = getpass.getpass("Confirm: ")
+        if passphrase != confirm:
+            sys.exit("error: passphrases do not match")
+        if len(passphrase) < 10:
+            sys.exit("error: use at least 10 characters")
+        vault.unlock(passphrase)
+
+    migrated = vault.import_legacy(passphrase)
+    if migrated:
+        print(f"migrated {migrated} wallet(s) from plaintext wallets.json")
+        print("plaintext file renamed to wallets.json.migrated — delete it once verified")
+    else:
+        vault.create_wallets(0)
+        print("vault ready")
+    return 0
+
+
+def cmd_list() -> int:
+    vault = Vault()
+    unlock(vault)
+    for wallet in vault.public_summary():
+        print(f"{wallet['id']:12s} {wallet['nickname']:16s} {wallet['public_key']} "
+              f"proxy={wallet['proxy']} {'enabled' if wallet['enabled'] else 'paused'}")
+    return 0
+
+
+def cmd_new(count: int) -> int:
+    vault = Vault()
+    unlock(vault)
+    created = vault.create_wallets(count)
+    for wallet in created:
+        print(f"{wallet['id']} {wallet['nickname']} {wallet['public_key']}")
+    print(f"\n{len(created)} wallet(s) created and encrypted. Private keys stay in the vault.")
+    return 0
+
+
+def cmd_import() -> int:
+    """Import from a hidden prompt, so the secret never enters shell history."""
+    from slcw import keys
+
+    vault = Vault()
+    unlock(vault)
+    secret = getpass.getpass("Secret (base58 / JSON array / hex / seed phrase): ")
+    passphrase = ""
+    if len(secret.split()) >= 12:
+        passphrase = getpass.getpass("BIP39 passphrase (blank if none): ")
+
+    try:
+        candidates = keys.parse_secret(secret, passphrase)
+    except keys.KeyImportError as exc:
+        sys.exit(f"error: {exc}")
+
+    if len(candidates) == 1:
+        chosen = candidates[0]
+    else:
+        print("\nThis phrase maps to more than one account. Pick the one you own:")
+        for index, candidate in enumerate(candidates):
+            print(f"  [{index}] {candidate.source}\n      {candidate.public_key}")
+        try:
+            chosen = candidates[int(input("Choice: ").strip())]
+        except (ValueError, IndexError):
+            sys.exit("error: invalid choice")
+
+    try:
+        wallet = vault.import_wallet(chosen.private_key, chosen.public_key)
+    except ValueError as exc:
+        sys.exit(f"error: {exc}")
+
+    print(f"\nimported {wallet['id']} {wallet['nickname']} {wallet['public_key']}")
+    print("restart slcw-fleet, or use the Telegram menu, to start its worker")
+    return 0
+
+
+def cmd_doctor() -> int:
+    config = config_mod.load()
+    problems = config.validate()
+    print(f"python           {sys.executable}")
+    print(f"enabled          {config.enabled}")
+    print(f"dry_run          {config.dry_run}")
+    print(f"vault present    {Vault().exists}")
+    print(f"max errors       {config.max_consecutive_errors}")
+    print(f"http attempts    {config.http_max_attempts}")
+    print(f"reaction median  {config.reaction_median_seconds}s")
+    try:
+        import curl_cffi  # noqa: F401
+        print("curl_cffi        installed")
+    except ImportError:
+        print("curl_cffi        MISSING — browser impersonation unavailable")
+        problems.append("curl_cffi is not installed")
+
+    if problems:
+        print("\nproblems:")
+        for problem in problems:
+            print(f"  - {problem}")
+        return 1
+    print("\nno problems found")
+    return 0
+
+
+def cmd_once(wallet_id: str) -> int:
+    config = config_mod.load()
+    vault = Vault()
+    unlock(vault)
+    wallet = vault.get(wallet_id)
+    if wallet is None:
+        sys.exit(f"error: no wallet {wallet_id!r}")
+
+    transport = Transport.for_wallet(config, wallet)
+    sessions = SessionManager(config)
+    session = sessions.get(wallet, transport)
+    api = GameApi(transport)
+    state = api.get_player(session)
+
+    orchestrator = Orchestrator(config=config, api=api)
+    decision = orchestrator.decide_and_act(wallet, session, state, None)
+    print("\n".join(decision.rationale_lines()))
+    if decision.error:
+        print(f"\nerror: {decision.error}")
+    if decision.result:
+        print(f"\nresult: {json.dumps(decision.result, indent=2, default=str)[:1500]}")
+    transport.close()
+    return 1 if decision.error else 0
+
+
+def cmd_why(wallet_id: str) -> int:
+    from slcw.runner import FLEET_STATE
+    if not FLEET_STATE.exists():
+        sys.exit("no fleet state yet")
+    payload = json.loads(FLEET_STATE.read_text())
+    status = (payload.get("wallets") or {}).get(wallet_id)
+    if not status:
+        sys.exit(f"no status for {wallet_id!r}")
+    for line in status.get("rationale") or ["(no decision recorded)"]:
+        print(line)
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        print(__doc__)
+        return 0
+    command, *rest = argv
+    if command == "setup":
+        from slcw.setup_wizard import run
+        return run()
+    if command == "init":
+        return cmd_init()
+    if command == "list":
+        return cmd_list()
+    if command == "new":
+        return cmd_new(int(rest[0]) if rest else 1)
+    if command == "import":
+        return cmd_import()
+    if command == "doctor":
+        return cmd_doctor()
+    if command == "once":
+        if not rest:
+            sys.exit("usage: slcwctl once <wallet-id>")
+        return cmd_once(rest[0])
+    if command == "why":
+        if not rest:
+            sys.exit("usage: slcwctl why <wallet-id>")
+        return cmd_why(rest[0])
+    sys.exit(f"unknown command {command!r} — see slcwctl --help")
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

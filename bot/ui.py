@@ -1,0 +1,351 @@
+"""Keyboard layouts and message rendering for the Telegram control plane."""
+from __future__ import annotations
+
+import datetime as _dt
+import html
+import json
+import time
+
+
+def keyboard(rows: list[list[tuple[str, str]]]) -> str:
+    """Build an inline keyboard payload from (label, callback_data) pairs."""
+    return json.dumps({"inline_keyboard": [
+        [{"text": label, "callback_data": data} for label, data in row] for row in rows]})
+
+
+def main_menu() -> str:
+    return keyboard([
+        [("📊 Status", "nav:status"), ("💰 Profit", "nav:profit")],
+        [("🏪 Market", "nav:market"), ("🌾 Farming", "nav:farming")],
+        [("⚔️ Combat", "nav:combat"), ("👛 Wallets", "wallet:list")],
+        [("⚙️ Kontrol", "nav:control"), ("🔐 Vault", "nav:vault")],
+        [("🔄 Refresh", "nav:status")],
+    ])
+
+
+def back_row(target: str = "nav:main") -> list[tuple[str, str]]:
+    return [("⬅️ Menu", target)]
+
+
+def control_menu(paused_count: int, total: int, dry_run: bool) -> str:
+    dry_label = "🧪 Dry-run: ON" if dry_run else "🚀 Dry-run: OFF"
+    return keyboard([
+        [("▶️ Resume semua", "ctl:resume_all"), ("⏸ Pause semua", "ctl:pause_all")],
+        [("🔄 Paksa siklus", "ctl:force"), (dry_label, "ctl:toggle_dry")],
+        [("📜 Logs", "ctl:logs"), ("🩺 Doctor", "ctl:doctor")],
+        back_row(),
+    ])
+
+
+IMPORT_HELP = (
+    "<b>📥 Import wallet yang sudah ada</b>\n\n"
+    "Kirim:\n<code>/import &lt;kunci-rahasia&gt;</code>\n\n"
+    "Format yang diterima:\n"
+    "• base58 (hasil export standar, 88 karakter)\n"
+    "• array JSON <code>[12,34,…]</code> dari solana-keygen atau Phantom\n"
+    "• hex, dengan atau tanpa <code>0x</code>\n"
+    "• seed phrase 12/24 kata\n\n"
+    "Pesanmu <b>langsung dihapus</b> dari chat setelah dibaca, dan kuncinya "
+    "disimpan terenkripsi.\n\n"
+    "⚠️ Seed phrase tidak menunjuk satu akun: Phantom pakai jalur turunan "
+    "<code>m/44'/501'/0'/0'</code>, solana-keygen pakai seed mentah. Kalau kamu "
+    "kirim frasa, saya tampilkan kedua alamatnya dan kamu pilih yang benar."
+)
+
+
+def wallet_list(wallets: list[dict], status: dict) -> str:
+    rows = []
+    for wallet in wallets:
+        state = status.get(wallet["id"], {})
+        mark = "⏸" if state.get("paused") else "▶️"
+        label = f"{mark} {wallet['id']} · {wallet.get('nickname', '')}"
+        rows.append([(label, f"wallet:show:{wallet['id']}")])
+    rows.append([("➕ Buat wallet", "wallet:new")])
+    rows.append(back_row())
+    return keyboard(rows)
+
+
+def wallet_detail(wallet_id: str, paused: bool) -> str:
+    toggle = ("▶️ Resume", f"wallet:resume:{wallet_id}") if paused else \
+             ("⏸ Pause", f"wallet:pause:{wallet_id}")
+    return keyboard([
+        [toggle, ("🔄 Siklus", f"wallet:force:{wallet_id}")],
+        [("🧠 Kenapa?", f"wallet:why:{wallet_id}")],
+        [("⬅️ Wallets", "wallet:list"), ("🏠 Menu", "nav:main")],
+    ])
+
+
+def new_wallet_menu() -> str:
+    return keyboard([
+        [("1", "wallet:create:1"), ("3", "wallet:create:3"), ("5", "wallet:create:5")],
+        [("📥 Import wallet", "wallet:importhelp")],
+        [("⬅️ Wallets", "wallet:list")],
+    ])
+
+
+def import_choice_menu(candidates: list) -> str:
+    """One button per address a seed phrase could mean."""
+    rows = [[(f"{c.source} · {c.public_key[:8]}…{c.public_key[-4:]}",
+              f"wallet:pick:{index}")] for index, c in enumerate(candidates)]
+    rows.append([("✖️ Batal", "wallet:cancelimport")])
+    return keyboard(rows)
+
+
+def vault_menu(unlocked: bool) -> str:
+    rows = []
+    if unlocked:
+        rows.append([("🔒 Lock", "vault:lock")])
+    else:
+        rows.append([("🔓 Cara unlock", "vault:howto")])
+    rows.append(back_row())
+    return keyboard(rows)
+
+
+# --- renderers -----------------------------------------------------------
+
+def _bar(current: int, maximum: int, width: int = 10) -> str:
+    if maximum <= 0:
+        return "─" * width
+    filled = max(0, min(width, round(width * current / maximum)))
+    return "█" * filled + "░" * (width - filled)
+
+
+def _ago(timestamp: int) -> str:
+    if not timestamp:
+        return "belum pernah"
+    delta = max(0, int(time.time() - timestamp))
+    if delta < 60:
+        return f"{delta}d lalu"
+    if delta < 3600:
+        return f"{delta // 60}m lalu"
+    return f"{delta // 3600}j {(delta % 3600) // 60}m lalu"
+
+
+def _in(timestamp: int) -> str:
+    if not timestamp:
+        return "—"
+    delta = int(timestamp - time.time())
+    if delta <= 0:
+        return "segera"
+    if delta < 60:
+        return f"{delta}d"
+    if delta < 3600:
+        return f"{delta // 60}m {delta % 60}d"
+    return f"{delta // 3600}j {(delta % 3600) // 60}m"
+
+
+def render_status(fleet_state: dict) -> str:
+    if not fleet_state.get("unlocked"):
+        return ("🔐 <b>Vault terkunci</b>\n\n"
+                "Engine idle sampai passphrase dimasukkan.\n"
+                "Kirim: <code>/unlock passphrase-kamu</code>")
+
+    wallets = fleet_state.get("wallets", {})
+    if not wallets:
+        return "Belum ada wallet. Buka 👛 Wallets → ➕ Buat wallet."
+
+    mode = "🧪 DRY-RUN" if fleet_state.get("dry_run") else "🚀 LIVE"
+    engine = "aktif" if fleet_state.get("enabled") else "claim-only"
+    lines = [f"<b>SLCW Fleet</b> · {mode} · engine {engine}", ""]
+
+    for wallet_id, status in sorted(wallets.items()):
+        state = status.get("state") or {}
+        mark = "⏸" if status.get("paused") else "▶️"
+        lines.append(f"{mark} <b>{wallet_id}</b> · {html.escape(str(status.get('nickname', '')))}")
+
+        if state:
+            lines.append(
+                f"   Lv{state.get('level', '?')} · {state.get('gold', 0):,}g · "
+                f"💎{state.get('diamonds', 0)}")
+            lines.append(
+                f"   ❤️ {_bar(state.get('health', 0), state.get('max_health', 1))} "
+                f"{state.get('health', 0)}/{state.get('max_health', 0)}")
+            lines.append(
+                f"   ⚡ {_bar(state.get('energy', 0), state.get('max_energy', 1))} "
+                f"{state.get('energy', 0)}/{state.get('max_energy', 0)}")
+            activity = state.get("activity", "idle")
+            remaining = state.get("activity_remaining_s", 0)
+            if activity and activity != "idle" and remaining:
+                lines.append(f"   🎯 {activity} · sisa {int(remaining) // 60}m")
+            else:
+                lines.append(f"   📍 {state.get('location', '?')}")
+
+        action = status.get("last_action") or "—"
+        lines.append(f"   ⚙️ {action} · {_ago(status.get('last_run_ts', 0))}")
+        lines.append(f"   ⏭ bangun {_in(status.get('next_wake_ts', 0))} "
+                     f"({html.escape(str(status.get('next_wake_reason', '')))})")
+
+        if status.get("last_error"):
+            lines.append(f"   ⚠️ <code>{html.escape(str(status['last_error'])[:120])}</code>")
+        if status.get("paused"):
+            lines.append(f"   ⏸ {html.escape(str(status.get('pause_reason', '')))}")
+        lines.append("")
+
+    age = fleet_state.get("market_age_s")
+    if age is not None:
+        lines.append(f"<i>Market snapshot {int(age) // 60}m lalu</i>")
+    return "\n".join(lines)
+
+
+def render_profit(totals, item_value: float, per_wallet: dict) -> str:
+    lines = ["<b>💰 Ledger terealisasi</b>", ""]
+    lines.append(f"Gold: <b>{totals.gold:,}</b>")
+    lines.append(f"XP: <b>{totals.xp:,}</b>")
+    if totals.hours:
+        lines.append(f"Rate: {totals.gold_per_hour:,.0f} gold/jam · "
+                     f"{totals.xp_per_hour:,.0f} xp/jam")
+        lines.append(f"Rentang: {totals.hours:.1f} jam · {totals.entries} entri")
+    if totals.battles_won or totals.battles_lost:
+        lines.append(f"Battle: {totals.battles_won}M / {totals.battles_lost}K "
+                     f"({totals.win_rate:.0%} menang)")
+    if totals.items:
+        lines.append("")
+        lines.append("<b>Item</b>")
+        for name, quantity in sorted(totals.items.items(), key=lambda x: -x[1]):
+            lines.append(f"  {html.escape(name)} ×{quantity}")
+        lines.append(f"Nilai di best-bid: <b>{item_value:,.0f} gold</b>"
+                     if item_value else "Nilai item: belum ada harga market")
+
+    if per_wallet:
+        lines.append("")
+        lines.append("<b>Per wallet</b>")
+        for wallet_id, wallet_totals in sorted(per_wallet.items()):
+            lines.append(f"  {wallet_id}: {wallet_totals.gold:,}g · {wallet_totals.xp:,}xp")
+
+    lines.append("")
+    lines.append("<i>Nilai USD belum bisa dihitung sampai $SLCW punya likuiditas.</i>")
+    return "\n".join(lines)
+
+
+def render_market(snapshot, holdings: dict | None = None) -> str:
+    if not snapshot or not snapshot.books:
+        return "Belum ada snapshot market. Tunggu siklus berikutnya."
+
+    lines = [f"<b>🏪 Black market</b> · {len(snapshot.books)} item · "
+             f"snapshot {int(snapshot.age_seconds) // 60}m lalu", ""]
+
+    crossed = snapshot.crossed()
+    if crossed:
+        lines.append("<b>⚡ Spread crossed (bid &gt; ask)</b>")
+        for book in crossed[:8]:
+            lines.append(f"  {html.escape(book.template_id)}: "
+                         f"bid {book.best_bid:,.0f} / ask {book.best_ask:,.0f} "
+                         f"→ {abs(book.spread):,.0f} margin")
+        lines.append("<i>Order tetap butuh persetujuan manual.</i>")
+        lines.append("")
+
+    priced = [b for b in snapshot.books.values() if b.best_bid is not None]
+    priced.sort(key=lambda b: -(b.best_bid or 0))
+    lines.append("<b>Bid tertinggi</b>")
+    for book in priced[:12]:
+        ask = f"{book.best_ask:,.0f}" if book.best_ask is not None else "—"
+        lines.append(f"  {html.escape(book.template_id)}: {book.best_bid:,.0f} / {ask}")
+
+    if holdings:
+        value = snapshot.value_of(holdings)
+        lines.append("")
+        lines.append(f"<b>Holding kamu di best-bid: {value:,.0f} gold</b>")
+    return "\n".join(lines)
+
+
+def render_wallet(wallet: dict, status: dict) -> str:
+    state = status.get("state") or {}
+    lines = [
+        f"<b>{wallet['id']}</b> · {html.escape(str(wallet.get('nickname', '')))}",
+        f"<code>{html.escape(str(wallet.get('public_key', '')))}</code>",
+        "",
+    ]
+    if state:
+        lines += [
+            f"Level {state.get('level', '?')} · XP {state.get('xp', 0):,}",
+            f"Gold {state.get('gold', 0):,} · 💎 {state.get('diamonds', 0)} · "
+            f"USDT {state.get('usdt', 0)}",
+            f"❤️ {state.get('health', 0)}/{state.get('max_health', 0)}  "
+            f"💙 {state.get('mana', 0)}/{state.get('max_mana', 0)}  "
+            f"⚡ {state.get('energy', 0)}/{state.get('max_energy', 0)}",
+            f"📍 {state.get('location', '?')} · 🎯 {state.get('activity', 'idle')}",
+            "",
+        ]
+    lines += [
+        f"Aksi terakhir: <b>{status.get('last_action', '—')}</b>",
+        f"Alasan: {html.escape(str(status.get('last_reason', '—')))}",
+        f"Dijalankan: {_ago(status.get('last_run_ts', 0))}",
+        f"Bangun lagi: {_in(status.get('next_wake_ts', 0))}",
+        f"Sesi: {status.get('refreshes', 0)} refresh (bukan login ulang)",
+        f"Proxy: {wallet.get('proxy') or 'tidak ada — keluar lewat IP VPS'}",
+    ]
+    if status.get("last_error"):
+        lines.append(f"⚠️ <code>{html.escape(str(status['last_error'])[:300])}</code>")
+    return "\n".join(lines)
+
+
+def render_farming(market, level: int, grade: int, gold: int, energy: int,
+                   config) -> str:
+    """Show what each gathering site would actually pay at current market bids."""
+    from slcw import farming
+
+    lines = [f"<b>🌾 Gathering</b> · grade {grade} · level {level}",
+             f"Gold {gold:,} · energi {energy}", ""]
+
+    for location_id, entry in farming.FARM_LOCATIONS.items():
+        eligible = farming.eligible_resources(location_id, level, grade)
+        if not eligible:
+            lines.append(f"<b>{location_id}</b> ({entry['profession']}) — belum memenuhi syarat")
+            continue
+
+        best = farming.best_resource(location_id, level, grade, market)
+        bid = (market.best_bid(best.item_id) if market else None) or 0
+        cycles = farming.max_energy_cycles(best.tier, energy, gold)
+        energy_cost = farming.energy_mode_cost(best.tier, cycles) if cycles else None
+        gold_cost = farming.gold_mode_cost(best.tier, config.farming_gold_hours)
+
+        lines.append(f"<b>{location_id}</b> · {entry['profession']}")
+        lines.append(f"  Terbaik: {html.escape(best.item_id)} (T{best.tier})")
+        lines.append(f"  Bid pasar: {f'{bid:,.0f}g' if bid else 'tidak diperdagangkan'}")
+        if energy_cost:
+            net = bid * cycles - energy_cost["gold"]
+            lines.append(f"  ⚡ energy: {cycles} unit / {cycles}m · "
+                         f"{energy_cost['gold']:,}g + {cycles}en → "
+                         f"{'+' if net >= 0 else ''}{net:,.0f}g")
+        units = 60 * config.farming_gold_hours
+        net_gold = bid * units - gold_cost["gold"]
+        lines.append(f"  💰 gold: {units} unit / {config.farming_gold_hours}j · "
+                     f"{gold_cost['gold']:,}g, 0 energi → "
+                     f"{'+' if net_gold >= 0 else ''}{net_gold:,.0f}g")
+        lines.append("")
+
+    lines.append("<i>Resource tanpa bid dinilai nol — engine tidak menebak harga.</i>")
+    return "\n".join(lines)
+
+
+def render_combat(memory) -> str:
+    """Expose what the bot has learned about each monster."""
+    if not memory.models:
+        return ("<b>⚔️ Combat</b>\n\nBelum ada data. Model per-monster terisi "
+                "setelah beberapa pertarungan.")
+
+    lines = ["<b>⚔️ Model combat yang dipelajari</b>", ""]
+    for monster_id, model in sorted(memory.models.items(),
+                                    key=lambda kv: -kv[1].rounds):
+        lines.append(f"<b>{html.escape(monster_id)}</b> · {model.rounds} ronde")
+        blocks = " ".join(f"{z[:1].upper()}{model.block_rate(z):.0%}"
+                          for z in ("head", "torso", "legs"))
+        attacks = " ".join(f"{z[:1].upper()}{model.attack_rate(z):.0%}"
+                           for z in ("head", "torso", "legs"))
+        lines.append(f"  Blok lawan: {blocks} → serang <b>{model.best_attack_zone()}</b>")
+        lines.append(f"  Serangan lawan: {attacks} → tangkis <b>{model.best_defense_zone()}</b>")
+        lines.append("")
+    lines.append("<i>Serang zona yang paling jarang diblok, tangkis zona yang "
+                 "paling sering diserang. 18% langkah tetap acak untuk eksplorasi.</i>")
+    return "\n".join(lines)
+
+
+def render_why(status: dict) -> str:
+    rationale = status.get("rationale") or []
+    if not rationale:
+        return "Belum ada keputusan tercatat untuk wallet ini."
+    body = "\n".join(html.escape(line) for line in rationale)
+    return (f"<b>🧠 Kenapa {status.get('wallet_id')} pilih aksi itu</b>\n\n"
+            f"<pre>{body}</pre>\n"
+            f"<i>Skor = gold-ekuivalen bersih per jam, setelah harga bayangan energi "
+            f"dan biaya HP.</i>")

@@ -1,0 +1,127 @@
+"""Game API surface: Firebase callables plus Firestore reads."""
+from __future__ import annotations
+
+import json
+import urllib.parse
+from dataclasses import dataclass
+
+from .config import FIRESTORE_BASE
+from .model import PlayerState, decode_document, parse_player
+from .transport import Transport
+
+
+@dataclass
+class GameApi:
+    transport: Transport
+
+    # --- Firestore reads -------------------------------------------------
+    def _document(self, path: str, id_token: str) -> dict:
+        payload = self.transport.request(
+            "GET", f"{FIRESTORE_BASE}/{path}",
+            headers={"Authorization": f"Bearer {id_token}"},
+        )
+        return decode_document(payload)
+
+    def get_player(self, session) -> PlayerState:
+        uid = urllib.parse.quote(session.local_id, safe="")
+        return parse_player(self._document(f"users/{uid}", session.id_token))
+
+    def get_inventory(self, session) -> dict:
+        uid = urllib.parse.quote(session.local_id, safe="")
+        return self._document(f"inventories/{uid}", session.id_token)
+
+    def query_collection(self, session, collection: str, limit: int = 500,
+                         offset: int = 0) -> list[dict]:
+        payload = self.transport.request(
+            "POST", f"{FIRESTORE_BASE}:runQuery",
+            json_body={"structuredQuery": {
+                "from": [{"collectionId": collection}],
+                "limit": limit,
+                "offset": offset,
+            }},
+            headers={"Authorization": f"Bearer {session.id_token}"},
+        )
+        rows = payload if isinstance(payload, list) else payload.get("value", payload)
+        if not isinstance(rows, list):
+            return []
+        return [decode_document(row["document"]) for row in rows
+                if isinstance(row, dict) and row.get("document")]
+
+    def query_all(self, session, collection: str, page_size: int = 500,
+                  max_pages: int = 12) -> list[dict]:
+        """Page through a collection until it is exhausted.
+
+        A single 500-row query returned exactly 500 open market orders, which means
+        the result was truncated and any bid beyond the cutoff was invisible to the
+        valuation engine.
+        """
+        collected: list[dict] = []
+        for page in range(max_pages):
+            batch = self.query_collection(
+                session, collection, limit=page_size, offset=page * page_size)
+            collected.extend(batch)
+            if len(batch) < page_size:
+                break
+        return collected
+
+    # --- callables -------------------------------------------------------
+    def _call(self, session, name: str, data: dict | None = None) -> dict:
+        return self.transport.call_function(name, data or {}, session.id_token)
+
+    def finish_activity(self, session) -> dict:
+        return self._call(session, "finishActivity")
+
+    def claim_initial_reward(self, session, level: int) -> dict:
+        return self._call(session, "claimInitialReward", {"level": level})
+
+    def start_relax(self, session) -> dict:
+        return self._call(session, "startRelax")
+
+    def start_production(self, session, cycles: int = 1) -> dict:
+        return self._call(session, "startProduction", {"cycles": cycles})
+
+    def start_farming(self, session, payload: dict) -> dict:
+        """Payload shape is built by slcw.farming.build_payload."""
+        return self._call(session, "startFarming", payload)
+
+    def start_travel(self, session, destination_id: str) -> dict:
+        return self._call(session, "startTravel", {"destinationId": destination_id})
+
+    def start_battle(self, session, monster_id: str) -> dict:
+        return self._call(session, "startBattle", {"monsterId": monster_id})
+
+    def process_turn(self, session, battle_id: str, attack: str, defense: str) -> dict:
+        return self._call(session, "processTurn", {
+            "battleId": battle_id, "attackZone": attack, "defenseZone": defense})
+
+    def spend_attribute_points(self, session, target_type: str, target_id: str,
+                               amount: int = 1) -> dict:
+        return self._call(session, "spendAttributePoints", {
+            "targetType": target_type, "targetId": target_id, "amount": amount})
+
+    def open_chests(self, session, chest_template_id: str, quantity: int = 1) -> dict:
+        return self._call(session, "openChests", {
+            "chestTemplateId": chest_template_id, "quantity": quantity})
+
+    def equip_item(self, session, instance_id: str) -> dict:
+        return self._call(session, "equipItem", {"instanceId": instance_id})
+
+    def complete_newbie_quest(self, session) -> dict:
+        return self._call(session, "completeNewbieQuest")
+
+    def onboard(self, session) -> dict:
+        """Run idempotent initializers for a brand-new account.
+
+        Each initializer may report that it already ran; that is a success, not a
+        failure, so benign rejections are recorded rather than raised.
+        """
+        from .transport import ApiError
+
+        results = {}
+        for name in ("initializeImperialStats", "initializeNewInventory",
+                     "migrateToNewInventory", "startFirstTravel"):
+            try:
+                results[name] = self._call(session, name)
+            except ApiError as exc:
+                results[name] = {"skipped": str(exc), "benign": exc.is_benign}
+        return results

@@ -1,0 +1,47 @@
+# ── Secrets ─────────────────────────────────────────────────────────────
+# Never commit anything below. The vault key material and the API credentials
+# are the whole security boundary of this project.
+.env
+.env.*
+!.env.example
+.vault-key
+.vault-passphrase
+*.pem
+*.key
+secrets/
+
+# ── Runtime state ───────────────────────────────────────────────────────
+# data/ holds the encrypted vault, session state, ledger, and market snapshots.
+# The vault is encrypted, but it is still per-deployment data with no business
+# in a shared repository.
+data/
+*.log
+
+# ── Capture artefacts ───────────────────────────────────────────────────
+# HAR captures and downloaded frontend bundles contain session tokens and are
+# large. Findings from them belong in docs/REVERSE-ENGINEERING.md instead.
+*.har
+archive/
+captures/
+
+# ── Python ──────────────────────────────────────────────────────────────
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ── Editors and OS ──────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# ── Internal notes ──────────────────────────────────────────────────────
+# Working notes, specs, and RE writeups stay local. The README is the public
+# record; everything else is kept in /root/slcw-bot-archive.
+docs/
+NOTES.md

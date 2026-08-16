@@ -1,0 +1,7 @@
+# Pinned so a fresh install reproduces a known-good stack.
+# All four ship prebuilt wheels for CPython 3.11-3.13 on manylinux x86_64, so no
+# compiler toolchain is required.
+curl_cffi==0.16.0
+solders==0.29.0
+base58==2.1.1
+cryptography==50.0.0

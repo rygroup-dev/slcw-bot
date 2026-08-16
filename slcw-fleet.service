@@ -1,0 +1,28 @@
+[Unit]
+Description=SLCW fleet orchestrator and Telegram control plane
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/slcw-bot
+EnvironmentFile=/root/slcw-bot/.env
+# Optional: written by `slcwctl setup` when auto-unlock is chosen.
+EnvironmentFile=-/root/slcw-bot/.vault-key
+# The interpreter lives inside the project. The previous units pointed at
+# /tmp/gmvenv, which is destroyed on reboot and would have taken the whole bot
+# down at the next restart.
+ExecStart=/root/slcw-bot/.venv/bin/python /root/slcw-bot/daemon.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=false
+ReadWritePaths=/root/slcw-bot/data
+
+[Install]
+WantedBy=multi-user.target
