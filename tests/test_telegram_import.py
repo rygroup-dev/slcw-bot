@@ -17,10 +17,14 @@ PHRASE = ("legal winner thank year wave sausage worth useful "
 
 
 class FakeFleet:
-    def __init__(self):
+    def __init__(self, market=None):
+        from slcw.market import MarketSnapshot
         self.status = {}
-        self.market = None
+        # The real Fleet always holds a snapshot, empty until the first fetch.
+        self.market = market if market is not None else MarketSnapshot()
+        self.last_task_status = None
         self.workers = []
+        self._threads = {}
 
     def ensure_worker(self, wallet):
         self.workers.append(wallet["id"])
@@ -155,6 +159,83 @@ class ImportFlowTests(unittest.TestCase):
         self.bot.handle_import(42, {"message_id": 7}, "/import")
         self.assertIn("Format yang diterima", self.bot.sent[-1])
 
+
+
+class OrderingBot(RecordingBot):
+    """Records the sequence of outbound calls, not just their contents."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.sequence = []
+
+    def answer(self, callback_id, text=""):
+        self.sequence.append("answer")
+        super().answer(callback_id, text)
+
+    def edit(self, chat_id, message_id, text, markup=None):
+        self.sequence.append("edit")
+        super().edit(chat_id, message_id, text, markup)
+
+    def send(self, chat_id, text, markup=None):
+        self.sequence.append("send")
+        return super().send(chat_id, text, markup)
+
+
+class LatencyBehaviourTests(unittest.TestCase):
+    """Telegram spins the button until answerCallbackQuery lands."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self._path = patch.object(vault_mod, "VAULT_PATH",
+                                  Path(self.tmp.name) / "wallets.enc")
+        self._path.start()
+        self._n = patch.object(vault_mod, "SCRYPT_N", 2 ** 12)
+        self._n.start()
+        self.vault = Vault()
+        self.vault.unlock("passphrase for tests")
+        self.bot = OrderingBot(
+            Config(telegram_token="t", telegram_chat_id="42"), self.vault, FakeFleet())
+
+    def tearDown(self):
+        self._n.stop()
+        self._path.stop()
+        self.tmp.cleanup()
+
+    def _callback(self, data):
+        return {"id": "cb-1", "data": data,
+                "message": {"message_id": 5, "chat": {"id": 42}}}
+
+    def test_callback_is_acknowledged_before_rendering(self):
+        self.bot.on_callback(self._callback("nav:status"))
+        self.assertEqual(self.bot.sequence[0], "answer",
+                         "the spinner must clear before the render round trip")
+
+    def test_every_main_menu_button_acknowledges_first(self):
+        import json as _json
+        from bot import ui
+        for row in _json.loads(ui.main_menu())["inline_keyboard"]:
+            for button in row:
+                self.bot.sequence = []
+                self.bot.on_callback(self._callback(button["callback_data"]))
+                self.assertTrue(self.bot.sequence, button["callback_data"])
+                self.assertEqual(self.bot.sequence[0], "answer",
+                                 f"{button['callback_data']} rendered before ack")
+
+    def test_unauthorised_chat_is_rejected_without_rendering(self):
+        callback = self._callback("nav:status")
+        callback["message"]["chat"]["id"] = 999
+        self.bot.on_callback(callback)
+        self.assertEqual(self.bot.sequence, ["answer"])
+
+    def test_unknown_namespace_only_acknowledges(self):
+        self.bot.on_callback(self._callback("bogus:thing"))
+        self.assertEqual(self.bot.sequence, ["answer"])
+
+    def test_reading_fleet_state_writes_nothing_to_disk(self):
+        before = sorted(p.name for p in Path(self.tmp.name).iterdir())
+        self.bot.fleet_state()
+        self.bot.fleet_state()
+        self.assertEqual(sorted(p.name for p in Path(self.tmp.name).iterdir()), before)
 
 if __name__ == "__main__":
     unittest.main()

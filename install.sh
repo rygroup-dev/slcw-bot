@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # SLCW fleet installer.
 #
-#   bash install.sh
+#   curl -fsSL https://raw.githubusercontent.com/rygroup-dev/slcw-bot/main/install.sh | bash
+#   bash install.sh                       # from a checkout
+#   SLCW_HOME=/opt/slcw bash install.sh   # install somewhere else
 #
 # Installs system prerequisites, builds an isolated virtualenv, then hands over to
 # the interactive setup wizard, which collects credentials, creates the encrypted
@@ -12,7 +14,8 @@
 set -euo pipefail
 
 INSTALL_DIR="${SLCW_HOME:-/root/slcw-bot}"
-REPO="${SLCW_REPO:-}"
+# Default so the piped one-liner can bootstrap itself; override to install a fork.
+REPO="${SLCW_REPO:-https://github.com/rygroup-dev/slcw-bot.git}"
 PYTHON_MIN_MINOR=11
 
 say()  { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
@@ -76,4 +79,19 @@ chmod +x slcwctl install.sh 2>/dev/null || true
 
 # --- hand over to the wizard ---------------------------------------------
 echo
+
+# Piped through `curl | bash`, stdin is the script text rather than the
+# terminal, so the wizard's prompts would read garbage and fail. Reattach to the
+# controlling terminal — testing by actually opening it, since /dev/tty can look
+# readable and still fail to open when there is no controlling terminal.
+if [ ! -t 0 ]; then
+  if { exec 3< /dev/tty; } 2>/dev/null; then
+    exec .venv/bin/python "$INSTALL_DIR/slcwctl" setup <&3
+  fi
+  warn "no terminal available, so the interactive setup was skipped"
+  say "Finish the install with:"
+  printf '\n    cd %s && ./slcwctl setup\n\n' "$INSTALL_DIR"
+  exit 0
+fi
+
 exec .venv/bin/python "$INSTALL_DIR/slcwctl" setup

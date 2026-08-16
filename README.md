@@ -6,7 +6,7 @@
 
 [![tests](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml/badge.svg)](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml)
 [![python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab?logo=python&logoColor=white)](https://www.python.org/)
-[![tests](https://img.shields.io/badge/tests-383%20passing-4c1)](tests/)
+[![tests](https://img.shields.io/badge/tests-425%20passing-4c1)](tests/)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 Every action is priced in gold-per-hour before it runs.
@@ -24,17 +24,67 @@ Anything that spends premium currency or moves funds cannot run at all — by co
 
 ## Install
 
+**One-liner**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/rygroup-dev/slcw-bot/main/install.sh | bash
+```
+
+**From a checkout**
+
 ```bash
 git clone https://github.com/rygroup-dev/slcw-bot.git /root/slcw-bot
 cd /root/slcw-bot && bash install.sh
 ```
 
-That is the whole thing. The installer detects your package manager, installs
-system prerequisites, builds an isolated virtualenv, installs pinned dependencies,
-and hands over to the setup wizard.
+Either way the installer detects your package manager, installs prerequisites,
+builds an isolated virtualenv, installs pinned dependencies, and hands over to the
+setup wizard. `SLCW_HOME=/opt/slcw` installs elsewhere; `SLCW_REPO=<url>` installs
+a fork.
 
 **Requirements:** Linux with systemd, Python 3.11+, root. All four Python
 dependencies ship prebuilt wheels, so no compiler is needed.
+
+<details>
+<summary><b>Manual install</b> — if you would rather not run a script</summary>
+
+```bash
+# 1. Prerequisites
+apt-get install -y python3 python3-venv git curl        # or dnf / apk
+
+# 2. Source and virtualenv
+git clone https://github.com/rygroup-dev/slcw-bot.git /root/slcw-bot
+cd /root/slcw-bot
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+
+# 3. Credentials
+cp .env.example .env && chmod 600 .env
+#    fill in TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, SLCW_FIREBASE_API_KEY
+
+# 4. Vault and first wallet
+./slcwctl init          # creates the encrypted vault
+./slcwctl new 1         # or: ./slcwctl import
+
+# 5. Service
+cp slcw-fleet.service /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now slcw-fleet
+
+# 6. Check
+./slcwctl doctor
+journalctl -u slcw-fleet -f
+```
+
+The vault stays locked after each restart until you send `/unlock <passphrase>` in
+Telegram. For unattended reboots, write the passphrase to a root-only file the
+unit already loads:
+
+```bash
+printf 'SLCW_VAULT_PASSPHRASE=your-passphrase\n' > .vault-key && chmod 600 .vault-key
+systemctl restart slcw-fleet
+```
+
+</details>
 
 ---
 

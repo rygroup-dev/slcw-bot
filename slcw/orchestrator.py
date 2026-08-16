@@ -12,19 +12,10 @@ from .config import Config
 from .guardrails import GuardrailViolation
 from .transport import ApiError
 
-# Monsters observed in live traffic. Extend as more are confirmed.
-MONSTER_CATALOG = [
-    "forestspider_lvl1_1",
-    "forestspider_lvl1_2",
-    "aerial_lvl4_1",
-]
-
-# Expected drops per battle, by monster. Values are quantities, priced from the
-# live market at scoring time rather than assumed to be worth anything.
+# Expected drops per battle, by monster. Only entries confirmed from live
+# rewards appear here; anything else is valued at zero rather than guessed.
 EXPECTED_DROPS = {
-    "forestspider_lvl1_1": {"spiderfang": 1.5},
     "forestspider_lvl1_2": {"spiderfang": 1.5},
-    "aerial_lvl4_1": {"aerial_feather": 1.2},
 }
 
 PRODUCTION_LOCATIONS = {"city_2"}
@@ -233,7 +224,7 @@ class Orchestrator:
         if (state.location_id in BATTLE_LOCATIONS
                 and state.energy >= econ.BATTLE_ENERGY
                 and state.health_ratio >= BATTLE_MIN_HEALTH_RATIO):
-            monster = select_monster(MONSTER_CATALOG, state.level, state.health_ratio)
+            monster = select_monster(None, state.level, state.health_ratio)
             if monster:
                 drop_values = {}
                 if not stale:

@@ -104,7 +104,55 @@ class RenderTests(unittest.TestCase):
         self.assertLess(len(ui.render_status(state)), 4000)
 
     def test_empty_fleet_guides_to_wallet_creation(self):
-        self.assertIn("Buat wallet", ui.render_status({"unlocked": True, "wallets": {}}))
+        text = ui.render_status({"unlocked": True, "wallets": {}})
+        self.assertIn("Belum ada wallet", text)
+        self.assertIn("Wallets", text)
+
+    def test_status_paginates_a_large_fleet(self):
+        wallets = {f"wallet-{i:02d}": self.STATE["wallets"]["wallet-01"]
+                   for i in range(1, 13)}
+        state = dict(self.STATE, wallets=wallets)
+        pages = ui.page_count(len(wallets))
+        self.assertGreater(pages, 1)
+        for page in range(1, pages + 1):
+            text = ui.render_status(state, page)
+            self.assertLess(len(text), 4000, f"page {page} exceeds Telegram's limit")
+            self.assertIn(f"Halaman {page}/{pages}", text)
+
+    def test_status_header_summarises_the_whole_fleet(self):
+        wallets = {f"wallet-{i:02d}": self.STATE["wallets"]["wallet-01"]
+                   for i in range(1, 8)}
+        text = ui.render_status(dict(self.STATE, wallets=wallets), 1)
+        # Seven wallets holding 1000 gold each, all active.
+        self.assertIn("7/7 aktif", text)
+        self.assertIn("7,000g total", text)
+
+    def test_page_beyond_the_end_clamps(self):
+        text = ui.render_status(self.STATE, page=99)
+        self.assertIn("wallet-01", text)
+
+    def test_status_menu_shows_arrows_only_when_needed(self):
+        single = json.loads(ui.status_menu(1, 1))["inline_keyboard"]
+        many = json.loads(ui.status_menu(2, 4))["inline_keyboard"]
+        self.assertNotIn("nav:status:1", [b["callback_data"] for b in single[0]])
+        self.assertIn("nav:status:1", [b["callback_data"] for b in many[0]])
+        self.assertIn("nav:status:3", [b["callback_data"] for b in many[0]])
+
+    def test_status_menu_wraps_at_both_ends(self):
+        first = [b["callback_data"] for b in json.loads(ui.status_menu(1, 3))
+                 ["inline_keyboard"][0]]
+        last = [b["callback_data"] for b in json.loads(ui.status_menu(3, 3))
+                ["inline_keyboard"][0]]
+        self.assertIn("nav:status:3", first, "back from page 1 wraps to the last")
+        self.assertIn("nav:status:1", last, "forward from the last wraps to page 1")
+
+    def test_paginated_menu_keeps_the_same_home_grid(self):
+        plain = {b["callback_data"] for row in
+                 json.loads(ui.main_menu())["inline_keyboard"] for b in row}
+        paged = {b["callback_data"] for row in
+                 json.loads(ui.status_menu(1, 3))["inline_keyboard"] for b in row}
+        self.assertTrue(plain - {"nav:status"} <= paged,
+                        "the paginated menu must not lose any section")
 
     def test_market_render_flags_crossed_books(self):
         snapshot = build_snapshot([

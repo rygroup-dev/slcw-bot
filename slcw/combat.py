@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .config import DATA
+from .monster_data import MONSTERS
 
 ZONES = ("head", "torso", "legs")
 MEMORY_PATH = DATA / "combat_memory.json"
@@ -137,7 +138,10 @@ class CombatMemory:
 
 
 def monster_level(monster_id: str) -> int:
-    """Parse the level out of ids like `forestspider_lvl1_2` or `aerial_lvl4_1`."""
+    """Level of a monster, from the registry when known, else parsed from its id."""
+    entry = MONSTERS.get(monster_id)
+    if entry:
+        return entry[1]
     for chunk in monster_id.split("_"):
         if chunk.startswith("lvl"):
             try:
@@ -147,17 +151,53 @@ def monster_level(monster_id: str) -> int:
     return 1
 
 
-def select_monster(catalog: list[str], player_level: int, health_ratio: float) -> str | None:
-    """Pick the strongest monster that is still safe at the current health level.
+def monster_power(monster_id: str) -> int:
+    entry = MONSTERS.get(monster_id)
+    return entry[2] if entry else 0
 
-    The previous engine hardcoded `forestspider_lvl1_2` regardless of level or HP,
-    so a level-6 character kept farming a level-1 spider and a nearly-dead character
-    would walk into the same fight as a healthy one.
+
+def monster_health(monster_id: str) -> int:
+    entry = MONSTERS.get(monster_id)
+    return entry[5] if entry else 0
+
+
+def monster_name(monster_id: str) -> str:
+    entry = MONSTERS.get(monster_id)
+    return entry[0] if entry else monster_id
+
+
+def known_monsters(max_level: int | None = None) -> list[str]:
+    """Every real monster id, optionally capped by level.
+
+    Ids are taken from the registry rather than written by hand: `startBattle`
+    rejects anything that does not exist, and the previous hardcoded list
+    contained `forestspider_lvl1_1`, which the game has never had.
     """
-    if not catalog:
+    ids = MONSTERS.keys()
+    if max_level is not None:
+        ids = [m for m in ids if MONSTERS[m][1] <= max_level]
+    return sorted(ids, key=lambda m: (MONSTERS[m][1], m))
+
+
+def select_monster(catalog: list[str] | None, player_level: int,
+                   health_ratio: float) -> str | None:
+    """Strongest monster that is still safe at the current health.
+
+    Among equals the least dangerous one wins: same level, lower weapon power
+    means fewer hit points lost per fight and so less rest time between them.
+    """
+    # None means "use the full registry"; an empty list means "nothing available"
+    # and must not silently fall back to every monster in the game.
+    source = known_monsters() if catalog is None else list(catalog)
+    pool = [m for m in source if m in MONSTERS] or source
+    if not pool:
         return None
+
     ceiling = player_level if health_ratio >= 0.8 else max(1, player_level - 2)
-    eligible = [m for m in catalog if monster_level(m) <= ceiling]
+    eligible = [m for m in pool if monster_level(m) <= ceiling]
     if not eligible:
-        return min(catalog, key=monster_level)
-    return max(eligible, key=monster_level)
+        # Nothing at or below the ceiling: take the weakest thing available
+        # rather than refusing to fight at all.
+        return min(pool, key=lambda m: (monster_level(m), monster_power(m)))
+
+    return max(eligible, key=lambda m: (monster_level(m), -monster_power(m)))

@@ -113,5 +113,64 @@ class MonsterSelectionTests(unittest.TestCase):
         self.assertIsNone(select_monster([], 5, 1.0))
 
 
+
+class MonsterRegistryTests(unittest.TestCase):
+    """The registry is generated from the bundle; startBattle rejects invented ids."""
+
+    def test_registry_is_populated(self):
+        from slcw.monster_data import MONSTERS
+        self.assertEqual(len(MONSTERS), 253)
+
+    def test_previously_hardcoded_id_never_existed(self):
+        from slcw.monster_data import MONSTERS
+        self.assertNotIn("forestspider_lvl1_1", MONSTERS,
+                         "the old catalog invented this id")
+        self.assertIn("forestspider_lvl1_2", MONSTERS)
+        self.assertIn("bigfrog_lvl1_1", MONSTERS)
+
+    def test_every_id_matches_the_level_in_its_name(self):
+        from slcw.combat import monster_level
+        from slcw.monster_data import MONSTERS
+        for monster_id, entry in MONSTERS.items():
+            suffix = [c for c in monster_id.split("_") if c.startswith("lvl")]
+            if suffix:
+                self.assertEqual(int(suffix[0][3:]), entry[1], monster_id)
+            self.assertEqual(monster_level(monster_id), entry[1])
+
+    def test_known_monsters_can_be_capped_by_level(self):
+        from slcw.combat import known_monsters, monster_level
+        for monster_id in known_monsters(max_level=3):
+            self.assertLessEqual(monster_level(monster_id), 3)
+
+    def test_selection_defaults_to_the_registry(self):
+        from slcw.combat import monster_level
+        chosen = select_monster(None, player_level=5, health_ratio=1.0)
+        self.assertIsNotNone(chosen)
+        self.assertLessEqual(monster_level(chosen), 5)
+
+    def test_selection_prefers_the_safer_monster_at_equal_level(self):
+        from slcw.combat import monster_power
+        chosen = select_monster(None, player_level=1, health_ratio=1.0)
+        # Both level-1 monsters have power 3, so either is acceptable, but the
+        # chosen one must never be the higher-powered of an equal-level pair.
+        peers = [m for m in ("bigfrog_lvl1_1", "forestspider_lvl1_2")]
+        self.assertIn(chosen, peers)
+        self.assertLessEqual(monster_power(chosen),
+                             max(monster_power(m) for m in peers))
+
+    def test_hurt_player_drops_below_its_level(self):
+        from slcw.combat import monster_level
+        healthy = select_monster(None, player_level=10, health_ratio=1.0)
+        hurt = select_monster(None, player_level=10, health_ratio=0.5)
+        self.assertEqual(monster_level(healthy), 10)
+        self.assertLessEqual(monster_level(hurt), 8)
+
+    def test_names_resolve_from_the_registry(self):
+        from slcw.combat import monster_health, monster_name
+        self.assertEqual(monster_name("forestspider_lvl1_2"),
+                         "Young Venomous Forest Spider")
+        self.assertEqual(monster_health("forestspider_lvl1_2"), 32)
+        self.assertEqual(monster_name("not_a_monster"), "not_a_monster")
+
 if __name__ == "__main__":
     unittest.main()

@@ -13,16 +13,35 @@ def keyboard(rows: list[list[tuple[str, str]]]) -> str:
         [{"text": label, "callback_data": data} for label, data in row] for row in rows]})
 
 
+# Single source of truth for the home grid, so the paginated and plain variants
+# can never drift apart.
+MAIN_ROWS = (
+    [("📊 Status", "nav:status"), ("💰 Profit", "nav:profit")],
+    [("🏪 Market", "nav:market"), ("⚗️ Ekonomi", "nav:economy")],
+    [("⚔️ Combat", "nav:combat"), ("🎯 Task", "nav:tasks")],
+    [("🎒 Inventory", "nav:inventory"), ("🗺 Peta", "nav:map")],
+    [("👛 Wallets", "wallet:list"), ("🔨 Crafting", "nav:crafting")],
+    [("⚙️ Kontrol", "nav:control"), ("🔐 Vault", "nav:vault")],
+)
+
+
 def main_menu() -> str:
-    return keyboard([
-        [("📊 Status", "nav:status"), ("💰 Profit", "nav:profit")],
-        [("🏪 Market", "nav:market"), ("⚗️ Ekonomi", "nav:economy")],
-        [("⚔️ Combat", "nav:combat"), ("🎯 Task", "nav:tasks")],
-        [("🎒 Inventory", "nav:inventory"), ("🗺 Peta", "nav:map")],
-        [("👛 Wallets", "wallet:list"), ("🔨 Crafting", "nav:crafting")],
-        [("⚙️ Kontrol", "nav:control"), ("🔐 Vault", "nav:vault")],
-        [("🔄 Refresh", "nav:status")],
-    ])
+    return keyboard([list(row) for row in MAIN_ROWS]
+                    + [[("🔄 Refresh", "nav:status")]])
+
+
+def status_menu(page: int = 1, pages: int = 1) -> str:
+    """Home grid, with page arrows only when the fleet is large enough to need them."""
+    rows = []
+    if pages > 1:
+        previous = pages if page <= 1 else page - 1
+        following = 1 if page >= pages else page + 1
+        rows.append([("◀️", f"nav:status:{previous}"),
+                     (f"{page}/{pages}", f"nav:status:{page}"),
+                     ("▶️", f"nav:status:{following}")])
+    rows += [list(row) for row in MAIN_ROWS]
+    rows.append([("🔄 Refresh", f"nav:status:{page}")])
+    return keyboard(rows)
 
 
 def economy_menu() -> str:
@@ -178,56 +197,91 @@ def _in(timestamp: int) -> str:
     return f"{delta // 3600}j {(delta % 3600) // 60}m"
 
 
-def render_status(fleet_state: dict) -> str:
+WALLETS_PER_PAGE = 4
+
+
+def page_count(total: int, per_page: int = WALLETS_PER_PAGE) -> int:
+    return max(1, (total + per_page - 1) // per_page)
+
+
+def render_status(fleet_state: dict, page: int = 1) -> str:
+    """Fleet dashboard, paginated so a large fleet still fits one message."""
     if not fleet_state.get("unlocked"):
-        return ("🔐 <b>Vault terkunci</b>\n\n"
+        return ("<b>🔐 Vault terkunci</b>\n\n"
                 "Engine idle sampai passphrase dimasukkan.\n"
-                "Kirim: <code>/unlock passphrase-kamu</code>")
+                "Kirim <code>/unlock passphrase-kamu</code>.\n\n"
+                "<i>Pesannya langsung dihapus dari chat setelah dibaca.</i>")
 
     wallets = fleet_state.get("wallets", {})
     if not wallets:
-        return "Belum ada wallet. Buka 👛 Wallets → ➕ Buat wallet."
+        return ("<b>SLCW Fleet</b>\n\nBelum ada wallet.\n\n"
+                "<i>Buka 👛 Wallets → ➕ untuk membuat atau mengimpor.</i>")
+
+    ordered = sorted(wallets.items())
+    total = len(ordered)
+    pages = page_count(total)
+    page = max(1, min(page, pages))
+    window = ordered[(page - 1) * WALLETS_PER_PAGE: page * WALLETS_PER_PAGE]
+
+    # Fleet-level summary first, so the headline reads at a glance.
+    active = sum(1 for _, s in ordered if not s.get("paused"))
+    errored = sum(1 for _, s in ordered if s.get("last_error"))
+    gold = sum(int((s.get("state") or {}).get("gold", 0) or 0) for _, s in ordered)
 
     mode = "🧪 DRY-RUN" if fleet_state.get("dry_run") else "🚀 LIVE"
     engine = "aktif" if fleet_state.get("enabled") else "claim-only"
-    lines = [f"<b>SLCW Fleet</b> · {mode} · engine {engine}", ""]
 
-    for wallet_id, status in sorted(wallets.items()):
+    lines = [
+        f"<b>⚔️ SLCW Fleet</b> · {mode}",
+        f"<code>{active}/{total} aktif</code> · <code>{gold:,}g total</code>"
+        + (f" · <code>{errored} error</code>" if errored else "")
+        + f" · engine {engine}",
+        "",
+    ]
+
+    for wallet_id, status in window:
         state = status.get("state") or {}
-        mark = "⏸" if status.get("paused") else "▶️"
-        lines.append(f"{mark} <b>{wallet_id}</b> · {html.escape(str(status.get('nickname', '')))}")
+        mark = "⏸" if status.get("paused") else ("⚠️" if status.get("last_error") else "▶️")
+        lines.append(f"{mark} <b>{wallet_id}</b> · "
+                     f"{html.escape(str(status.get('nickname', '')))}")
 
         if state:
-            lines.append(
-                f"   Lv{state.get('level', '?')} · {state.get('gold', 0):,}g · "
-                f"💎{state.get('diamonds', 0)}")
-            lines.append(
-                f"   ❤️ {_bar(state.get('health', 0), state.get('max_health', 1))} "
-                f"{state.get('health', 0)}/{state.get('max_health', 0)}")
-            lines.append(
-                f"   ⚡ {_bar(state.get('energy', 0), state.get('max_energy', 1))} "
-                f"{state.get('energy', 0)}/{state.get('max_energy', 0)}")
+            lines.append(f"   Lv{state.get('level', '?')} · "
+                         f"{state.get('gold', 0):,}g · 💎{state.get('diamonds', 0)}"
+                         + (f" · 📦{state['chests']}" if state.get("chests") else ""))
+            lines.append(f"   ❤️ {_bar(state.get('health', 0), state.get('max_health', 1))} "
+                         f"{state.get('health', 0)}/{state.get('max_health', 0)}")
+            lines.append(f"   ⚡ {_bar(state.get('energy', 0), state.get('max_energy', 1))} "
+                         f"{state.get('energy', 0)}/{state.get('max_energy', 0)}")
+
             activity = state.get("activity", "idle")
             remaining = state.get("activity_remaining_s", 0)
+            place = html.escape(str(state.get("location", "?")))
             if activity and activity != "idle" and remaining:
-                lines.append(f"   🎯 {activity} · sisa {int(remaining) // 60}m")
+                lines.append(f"   🎯 {html.escape(str(activity))} · "
+                             f"sisa {int(remaining) // 60}m · 📍{place}")
             else:
-                lines.append(f"   📍 {state.get('location', '?')}")
+                lines.append(f"   📍 {place}")
 
-        action = status.get("last_action") or "—"
-        lines.append(f"   ⚙️ {action} · {_ago(status.get('last_run_ts', 0))}")
-        lines.append(f"   ⏭ bangun {_in(status.get('next_wake_ts', 0))} "
-                     f"({html.escape(str(status.get('next_wake_reason', '')))})")
+        lines.append(f"   ⚙️ {html.escape(str(status.get('last_action') or '—'))} · "
+                     f"{_ago(status.get('last_run_ts', 0))} · "
+                     f"⏭ {_in(status.get('next_wake_ts', 0))}")
 
         if status.get("last_error"):
-            lines.append(f"   ⚠️ <code>{html.escape(str(status['last_error'])[:120])}</code>")
-        if status.get("paused"):
+            lines.append(f"   ⚠️ <code>"
+                         f"{html.escape(str(status['last_error'])[:110])}</code>")
+        elif status.get("paused"):
             lines.append(f"   ⏸ {html.escape(str(status.get('pause_reason', '')))}")
         lines.append("")
 
+    footer = []
+    if pages > 1:
+        footer.append(f"Halaman {page}/{pages}")
     age = fleet_state.get("market_age_s")
     if age is not None:
-        lines.append(f"<i>Market snapshot {int(age) // 60}m lalu</i>")
+        footer.append(f"market {int(age) // 60}m lalu")
+    if footer:
+        lines.append(f"<i>{' · '.join(footer)}</i>")
     return "\n".join(lines)
 
 

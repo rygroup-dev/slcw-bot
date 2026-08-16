@@ -140,8 +140,7 @@ class TelegramBot:
         if command in ("/start", "/menu", "/help"):
             return self.show_main(chat_id)
         if command == "/status":
-            return self.send(chat_id, ui.render_status(self.fleet_state()),
-                             ui.main_menu())
+            return self.show_main(chat_id)
         if command == "/profit":
             return self.send(chat_id, self.profit_text(), ui.main_menu())
         if command == "/market":
@@ -261,8 +260,11 @@ class TelegramBot:
         This used to persist to disk and read the file back on every navigation,
         which put a write in the path of a button press for no benefit.
         """
-        market_age = (round(self.fleet.market.age_seconds, 1)
-                      if self.fleet.market.taken_at else None)
+        # A view must never crash on missing data; a snapshot can legitimately be
+        # absent before the first market fetch completes.
+        market = getattr(self.fleet, "market", None)
+        market_age = (round(market.age_seconds, 1)
+                      if market is not None and market.taken_at else None)
         return {
             "updated_at": int(time.time()),
             "dry_run": self.config.dry_run,
@@ -274,13 +276,22 @@ class TelegramBot:
 
     # --- views -----------------------------------------------------------
     def show_main(self, chat_id) -> None:
-        self.send(chat_id, ui.render_status(self.fleet_state()), ui.main_menu())
+        state = self.fleet_state()
+        pages = ui.page_count(len(state.get("wallets") or {}))
+        self.send(chat_id, ui.render_status(state), ui.status_menu(1, pages))
 
     def route_nav(self, chat_id, message_id, callback_id, parts) -> None:
         view = parts[0] if parts else "main"
+        page = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 1
+
+        if view in ("main", "status"):
+            state = self.fleet_state()
+            pages = ui.page_count(len(state.get("wallets") or {}))
+            return self.edit(chat_id, message_id,
+                             ui.render_status(state, page),
+                             ui.status_menu(page, pages))
+
         render = {
-            "main": lambda: (ui.render_status(self.fleet_state()), ui.main_menu()),
-            "status": lambda: (ui.render_status(self.fleet_state()), ui.main_menu()),
             "profit": lambda: (self.profit_text(), ui.main_menu()),
             "market": lambda: (ui.render_market(self.fleet.market), ui.main_menu()),
             "economy": lambda: (ui.ECONOMY_INTRO, ui.economy_menu()),
