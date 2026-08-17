@@ -42,6 +42,22 @@ BATTLE_HP_LOSS = 6
 
 RELAX_SECONDS = 110
 
+# startHunting: a timed, passive alternative to battle that needs no turns and,
+# from the bundle, no particular location — unlike battle, which is gated to
+# BATTLE_LOCATIONS. One energy-mode cycle against forestspider_lvl1_2 (tier 1)
+# was measured live: 11 xp, 1x spiderfang, costing 3 gold + 3 energy, settling
+# ~180s later through the same finishActivity path as farming. Energy-for-energy
+# it loses to battle (11 xp / 3 energy vs 22 xp / 1 energy) and it costs gold
+# battle does not, so it will rarely win the scoring fight — its real value is
+# being available at gathering zones that have no battle option at all. Only
+# this one measured monster is scored; every other monster stays unmodelled
+# rather than guessed at the same rate.
+HUNTING_ENERGY_PER_CYCLE = 3
+HUNTING_SECONDS_PER_CYCLE = 180
+HUNTING_MEASURED = {
+    "forestspider_lvl1_2": {"tier": 1, "xp": 11, "drops": {"spiderfang": 1.0}},
+}
+
 
 @dataclass
 class ActionScore:
@@ -131,6 +147,43 @@ def battle_candidate(monster_id: str, economy: Economy, drop_values: dict | None
         hp_cost=BATTLE_HP_LOSS,
         duration_seconds=BATTLE_SECONDS,
         reason=(f"{BATTLE_XP} xp @ {economy.xp_gold:g}g + drops worth {drop_gold:.0f}g"
+                + (" (market data stale, drops valued at 0)" if market_stale else "")),
+        degraded=market_stale,
+    )
+
+
+def hunting_candidate(state, economy: Economy, market=None,
+                      market_stale: bool = False) -> ActionScore | None:
+    """Value one energy-mode hunting cycle against a monster with measured data.
+
+    Only monsters in HUNTING_MEASURED are scored; everything else returns None
+    rather than extrapolating a per-monster yield that was never observed.
+    """
+    entry = HUNTING_MEASURED.get("forestspider_lvl1_2")
+    if entry is None:
+        return None
+
+    tier_multiplier = 3 ** (entry["tier"] - 1)
+    energy_cost = HUNTING_ENERGY_PER_CYCLE
+    gold_cost = HUNTING_ENERGY_PER_CYCLE * tier_multiplier
+    if state.energy < energy_cost or state.gold < gold_cost:
+        return None
+
+    drop_gold = 0.0
+    if market is not None:
+        for item, quantity in entry["drops"].items():
+            drop_gold += (market.best_bid(item) or 0.0) * quantity
+
+    return ActionScore(
+        action="startHunting",
+        params={"monsterId": "forestspider_lvl1_2", "monsterLevel": 1,
+               "mode": "energy", "cycles": 1, "hours": 0},
+        gold_equivalent=entry["xp"] * economy.xp_gold + drop_gold,
+        energy_cost=energy_cost,
+        gold_cost=gold_cost,
+        duration_seconds=HUNTING_SECONDS_PER_CYCLE,
+        reason=(f"{entry['xp']} xp @ {economy.xp_gold:g}g + drops worth {drop_gold:.0f}g, "
+                f"{gold_cost}g + {energy_cost}en, passive"
                 + (" (market data stale, drops valued at 0)" if market_stale else "")),
         degraded=market_stale,
     )

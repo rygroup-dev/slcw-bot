@@ -6,7 +6,7 @@
 
 [![tests](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml/badge.svg)](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml)
 [![python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab?logo=python&logoColor=white)](https://www.python.org/)
-[![tests](https://img.shields.io/badge/tests-549%20passing-4c1)](tests/)
+[![tests](https://img.shields.io/badge/tests-554%20passing-4c1)](tests/)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 Every action is priced in gold-per-hour before it runs.
@@ -359,6 +359,16 @@ the name, whatever the frontend bundle implies), and **citizenship** — the gat
 front of citizenship quests — was confirmed to cost diamonds, not gold, on a real
 account with plenty of gold and zero diamonds. Both stay out of the decision loop
 for exactly that reason, recorded in `guardrails.py`.
+
+**Hunting** is a third: a passive, turn-free alternative to battle, measured live
+at 11 xp + 1× spiderfang for 3 gold and 3 energy against a tier-1 monster,
+settling ~180 seconds later through the same activity-claim path as farming.
+Energy-for-energy it loses to battle (11 xp / 3 energy vs 22 xp / 1 energy) and it
+spends gold battle does not — so it is not "better," it is *available where battle
+is not*. Battle only fires at `farm_3`/`wildland_1`; hunting has no such gate, so
+it now fills the gap at gathering zones that otherwise have zero combat option.
+Only the one measured monster is scored — every other monster stays out of the
+formula rather than extrapolated from a single data point.
 
 ---
 

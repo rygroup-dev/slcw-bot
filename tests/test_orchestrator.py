@@ -194,6 +194,13 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(candidates[0].action, "battle")
         self.assertFalse(candidates[0].degraded)
 
+    def test_hunting_is_offered_outside_battle_locations(self):
+        """Unlike battle, hunting is not gated to farm_3/wildland_1."""
+        orchestrator = make()
+        state = state_of(currentLocationId="farm_1", energy=50, balance=1000)
+        candidates = orchestrator.build_candidates(state)
+        self.assertIn("startHunting", [c.action for c in candidates])
+
 
 class BattleTests(unittest.TestCase):
     def test_battle_settles_activity_on_normal_win(self):

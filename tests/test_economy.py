@@ -64,6 +64,35 @@ class ScoringTests(unittest.TestCase):
         self.assertEqual(econ.rank([slow, fast])[0].action, "fast")
 
 
+class HuntingTests(unittest.TestCase):
+    def setUp(self):
+        self.economy = econ.Economy()
+
+    def _state(self, gold=1000, energy=50):
+        return parse_player({"balance": gold, "energy": energy, "maxEnergy": 100,
+                             "attributes": {"vitality": 3, "wisdom": 3},
+                             "currentHealth": 130, "currentMana": 130})
+
+    def test_scores_using_the_measured_yield(self):
+        hunt = econ.hunting_candidate(self._state(), self.economy)
+        self.assertEqual(hunt.action, "startHunting")
+        self.assertEqual(hunt.energy_cost, 3)
+        self.assertEqual(hunt.gold_cost, 3)
+        self.assertAlmostEqual(hunt.gold_equivalent, 11 * econ.DEFAULT_XP_GOLD)
+
+    def test_none_without_enough_energy(self):
+        self.assertIsNone(econ.hunting_candidate(self._state(energy=1), self.economy))
+
+    def test_none_without_enough_gold(self):
+        self.assertIsNone(econ.hunting_candidate(self._state(gold=0), self.economy))
+
+    def test_loses_to_battle_on_energy_efficiency(self):
+        """Measured live: 11 xp for 3 energy vs battle's 22 xp for 1 — battle wins."""
+        hunt = econ.hunting_candidate(self._state(), self.economy)
+        battle = econ.battle_candidate("forestspider_lvl1_2", self.economy)
+        self.assertLess(hunt.gold_per_energy, battle.gold_per_energy)
+
+
 class RelaxTests(unittest.TestCase):
     def test_relax_value_tracks_missing_health(self):
         hurt = parse_player({"attributes": {"vitality": 3, "wisdom": 3},

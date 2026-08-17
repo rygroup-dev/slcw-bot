@@ -304,6 +304,13 @@ class Orchestrator:
                     market_stale=stale,
                 ))
 
+        # Passive and location-independent, unlike battle — so it is offered
+        # everywhere, not just at BATTLE_LOCATIONS. It has no HP cost either.
+        hunt = econ.hunting_candidate(state, self.economy, market=market,
+                                      market_stale=stale)
+        if hunt is not None:
+            candidates.append(hunt)
+
         # Resting is worth considering even at decent health when nothing else is
         # affordable, because it converts idle time into future capacity.
         if not candidates and state.health < state.max_health:
@@ -476,6 +483,11 @@ class Orchestrator:
             return self.api.start_production(session, candidate.params.get("cycles", 1))
         if action == "startFarming":
             return self.api.start_farming(session, candidate.params)
+        if action == "startHunting":
+            p = candidate.params
+            return self.api.start_hunting(session, p["monsterId"], p["monsterLevel"],
+                                          mode=p["mode"], cycles=p["cycles"],
+                                          hours=p["hours"])
         if action == "startRefining":
             return self.api.start_refining(session, candidate.params)
         if action == "refillEnergyFree":
