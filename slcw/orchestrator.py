@@ -8,7 +8,7 @@ from dataclasses import dataclass, field, replace
 from . import economy as econ
 from . import build as build_mod
 from . import farming, inventory as inv_mod, leveling, refining, world
-from .combat import CombatMemory, select_monster
+from .combat import CombatMemory, monster_level, select_monster
 from .config import Config
 from .guardrails import GuardrailViolation
 from .transport import ApiError
@@ -278,11 +278,11 @@ class Orchestrator:
                 candidates.extend(econ.farming_candidates(
                     resource, budget_state, market, self.config))
 
-        if (state.location_id in BATTLE_LOCATIONS
-                and state.energy >= econ.BATTLE_ENERGY
-                and state.health_ratio >= BATTLE_MIN_HEALTH_RATIO):
-            # Real combat stats decide what is survivable, and measured
-            # outcomes decide what is worth fighting.
+        # Monster choice drives both battle and hunting: real combat stats decide
+        # what is survivable, and measured outcomes (per-monster, learned from
+        # actual fights) decide what is worth fighting. Computed once, unconditional
+        # on location, because hunting has no location gate even though battle does.
+        if state.energy >= econ.BATTLE_ENERGY:
             stats = build_mod.derive(state.attributes, state.equipment)
             monster = select_monster(
                 None, state.level, state.health_ratio,
@@ -291,25 +291,45 @@ class Orchestrator:
                 current_health=state.health,
                 memory=self.combat, market=market, rng=self.rng)
             if monster:
+                # Every monster's own fights teach us its real drop table —
+                # prefer that over the small hand-verified EXPECTED_DROPS
+                # fallback the moment there is at least one observed battle.
+                learned = self.combat.models.get(monster)
+                has_learned = bool(learned and learned.battles)
+                expected_drops = (learned.avg_drops() if has_learned
+                                  else EXPECTED_DROPS.get(monster))
+
                 drop_values = {}
                 if not stale:
-                    for item in EXPECTED_DROPS.get(monster, {}):
+                    for item in (expected_drops or {}):
                         bid = market.best_bid(item)
                         if bid:
                             drop_values[item] = bid
-                candidates.append(econ.battle_candidate(
-                    monster, self.economy,
-                    drop_values=drop_values,
-                    expected_drops=EXPECTED_DROPS.get(monster),
-                    market_stale=stale,
-                ))
 
-        # Passive and location-independent, unlike battle — so it is offered
-        # everywhere, not just at BATTLE_LOCATIONS. It has no HP cost either.
-        hunt = econ.hunting_candidate(state, self.economy, market=market,
-                                      market_stale=stale)
-        if hunt is not None:
-            candidates.append(hunt)
+                if (state.location_id in BATTLE_LOCATIONS
+                        and state.health_ratio >= BATTLE_MIN_HEALTH_RATIO):
+                    candidates.append(econ.battle_candidate(
+                        monster, self.economy,
+                        drop_values=drop_values,
+                        expected_drops=expected_drops,
+                        market_stale=stale,
+                    ))
+
+                # Passive and location-independent, unlike battle — offered
+                # everywhere, including gathering zones with no battle option.
+                # Valued from this same monster's learned battle data (or the
+                # flat fallback) scaled by the measured hunting/battle ratio,
+                # rather than a hardcoded single monster.
+                xp_estimate = learned.avg_xp if has_learned else econ.BATTLE_XP
+                hunt = econ.hunting_candidate(
+                    monster, monster_level(monster), self.economy,
+                    xp_estimate, state.energy, state.gold,
+                    drop_values=drop_values,
+                    expected_drops=expected_drops,
+                    market_stale=stale,
+                )
+                if hunt is not None:
+                    candidates.append(hunt)
 
         # Resting is worth considering even at decent health when nothing else is
         # affordable, because it converts idle time into future capacity.

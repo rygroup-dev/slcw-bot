@@ -46,17 +46,31 @@ RELAX_SECONDS = 110
 # from the bundle, no particular location — unlike battle, which is gated to
 # BATTLE_LOCATIONS. One energy-mode cycle against forestspider_lvl1_2 (tier 1)
 # was measured live: 11 xp, 1x spiderfang, costing 3 gold + 3 energy, settling
-# ~180s later through the same finishActivity path as farming. Energy-for-energy
-# it loses to battle (11 xp / 3 energy vs 22 xp / 1 energy) and it costs gold
-# battle does not, so it will rarely win the scoring fight — its real value is
-# being available at gathering zones that have no battle option at all. Only
-# this one measured monster is scored; every other monster stays unmodelled
-# rather than guessed at the same rate.
+# ~180s later through the same finishActivity path as farming. That is roughly
+# half of the same monster's battle payout (22 xp for battle vs 11 for hunting)
+# for three times the energy plus gold battle does not spend, so hunting will
+# rarely outscore battle head-to-head — its real value is being available
+# wherever battle is not (gathering zones with no combat option at all).
+#
+# Only one monster's actual yield was ever observed, so every other monster is
+# valued through this fixed ratio against whatever the *battle* side already
+# knows about it (learned per-monster average, or the flat fallback) rather
+# than an invented per-monster hunting number. From the bundle: cost scales by
+# monster tier the same way farming's gold-mode does — 3 gold and 3 energy per
+# cycle at tier 1, ×3 per tier above that (ceil(monster_level / 15)).
+HUNTING_YIELD_RATIO = 11 / BATTLE_XP
 HUNTING_ENERGY_PER_CYCLE = 3
 HUNTING_SECONDS_PER_CYCLE = 180
-HUNTING_MEASURED = {
-    "forestspider_lvl1_2": {"tier": 1, "xp": 11, "drops": {"spiderfang": 1.0}},
-}
+
+
+def hunting_tier(monster_level: int) -> int:
+    return max(1, -(-monster_level // 15))  # ceil(monster_level / 15)
+
+
+def hunting_cost(monster_level: int, cycles: int = 1) -> dict:
+    multiplier = 3 ** (hunting_tier(monster_level) - 1)
+    return {"gold": HUNTING_ENERGY_PER_CYCLE * cycles * multiplier,
+            "energy": HUNTING_ENERGY_PER_CYCLE * cycles}
 
 
 @dataclass
@@ -152,38 +166,38 @@ def battle_candidate(monster_id: str, economy: Economy, drop_values: dict | None
     )
 
 
-def hunting_candidate(state, economy: Economy, market=None,
+def hunting_candidate(monster_id: str, monster_level: int, economy: Economy,
+                      xp_estimate: float, energy: int, gold: int,
+                      drop_values: dict | None = None, expected_drops: dict | None = None,
                       market_stale: bool = False) -> ActionScore | None:
-    """Value one energy-mode hunting cycle against a monster with measured data.
+    """Value one energy-mode hunting cycle against whichever monster survivable
+    combat-stat selection already picked for battle.
 
-    Only monsters in HUNTING_MEASURED are scored; everything else returns None
-    rather than extrapolating a per-monster yield that was never observed.
+    xp_estimate should be that monster's own learned battle average when one
+    exists (CombatMemory), or the flat BATTLE_XP fallback otherwise — the same
+    per-monster data battle already uses, not a hunting-specific guess.
     """
-    entry = HUNTING_MEASURED.get("forestspider_lvl1_2")
-    if entry is None:
+    cost = hunting_cost(monster_level)
+    if energy < cost["energy"] or gold < cost["gold"]:
         return None
 
-    tier_multiplier = 3 ** (entry["tier"] - 1)
-    energy_cost = HUNTING_ENERGY_PER_CYCLE
-    gold_cost = HUNTING_ENERGY_PER_CYCLE * tier_multiplier
-    if state.energy < energy_cost or state.gold < gold_cost:
-        return None
-
-    drop_gold = 0.0
-    if market is not None:
-        for item, quantity in entry["drops"].items():
-            drop_gold += (market.best_bid(item) or 0.0) * quantity
+    drops = expected_drops or {}
+    values = drop_values or {}
+    drop_gold = sum(values.get(item, 0.0) * quantity
+                    for item, quantity in drops.items()) * HUNTING_YIELD_RATIO
+    xp_value = xp_estimate * HUNTING_YIELD_RATIO
 
     return ActionScore(
         action="startHunting",
-        params={"monsterId": "forestspider_lvl1_2", "monsterLevel": 1,
+        params={"monsterId": monster_id, "monsterLevel": monster_level,
                "mode": "energy", "cycles": 1, "hours": 0},
-        gold_equivalent=entry["xp"] * economy.xp_gold + drop_gold,
-        energy_cost=energy_cost,
-        gold_cost=gold_cost,
+        gold_equivalent=xp_value * economy.xp_gold + drop_gold,
+        energy_cost=cost["energy"],
+        gold_cost=cost["gold"],
         duration_seconds=HUNTING_SECONDS_PER_CYCLE,
-        reason=(f"{entry['xp']} xp @ {economy.xp_gold:g}g + drops worth {drop_gold:.0f}g, "
-                f"{gold_cost}g + {energy_cost}en, passive"
+        reason=(f"~{xp_value:.0f} xp (measured {HUNTING_YIELD_RATIO:.0%} of battle) "
+                f"@ {economy.xp_gold:g}g + drops worth {drop_gold:.0f}g, "
+                f"{cost['gold']}g + {cost['energy']}en, passive"
                 + (" (market data stale, drops valued at 0)" if market_stale else "")),
         degraded=market_stale,
     )

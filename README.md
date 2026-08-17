@@ -6,7 +6,7 @@
 
 [![tests](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml/badge.svg)](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml)
 [![python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab?logo=python&logoColor=white)](https://www.python.org/)
-[![tests](https://img.shields.io/badge/tests-554%20passing-4c1)](tests/)
+[![tests](https://img.shields.io/badge/tests-558%20passing-4c1)](tests/)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 Every action is priced in gold-per-hour before it runs.
@@ -367,8 +367,18 @@ Energy-for-energy it loses to battle (11 xp / 3 energy vs 22 xp / 1 energy) and 
 spends gold battle does not — so it is not "better," it is *available where battle
 is not*. Battle only fires at `farm_3`/`wildland_1`; hunting has no such gate, so
 it now fills the gap at gathering zones that otherwise have zero combat option.
-Only the one measured monster is scored — every other monster stays out of the
-formula rather than extrapolated from a single data point.
+
+It scales the same way battle does rather than staying pinned to the one monster
+that was actually measured: both share the exact same `select_monster` call, so
+hunting always targets whatever monster the engine would currently fight — the
+pick that already accounts for level, real combat stats (weapon power, defense)
+derived from current attributes and equipped gear, and each monster's own
+survivability check. As gear and levels improve, so does the monster hunting
+points at, automatically. Its *value* is estimated from that monster's own
+learned battle average once one exists (CombatMemory — real XP and drop rates
+from actual fights), falling back to the flat battle constant only for a monster
+never yet fought, all scaled by the one measured hunting/battle ratio rather than
+a separate guess per monster.
 
 ---
 

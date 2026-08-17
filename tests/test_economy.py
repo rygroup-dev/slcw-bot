@@ -68,27 +68,41 @@ class HuntingTests(unittest.TestCase):
     def setUp(self):
         self.economy = econ.Economy()
 
-    def _state(self, gold=1000, energy=50):
-        return parse_player({"balance": gold, "energy": energy, "maxEnergy": 100,
-                             "attributes": {"vitality": 3, "wisdom": 3},
-                             "currentHealth": 130, "currentMana": 130})
-
-    def test_scores_using_the_measured_yield(self):
-        hunt = econ.hunting_candidate(self._state(), self.economy)
+    def test_scores_using_the_flat_fallback_scaled_by_the_measured_ratio(self):
+        hunt = econ.hunting_candidate(
+            "forestspider_lvl1_2", 1, self.economy, econ.BATTLE_XP,
+            energy=50, gold=1000)
         self.assertEqual(hunt.action, "startHunting")
         self.assertEqual(hunt.energy_cost, 3)
         self.assertEqual(hunt.gold_cost, 3)
         self.assertAlmostEqual(hunt.gold_equivalent, 11 * econ.DEFAULT_XP_GOLD)
 
+    def test_scores_using_a_learned_per_monster_average_when_given_one(self):
+        hunt = econ.hunting_candidate(
+            "icewolf_lvl2_3", 2, self.economy, xp_estimate=40,
+            energy=50, gold=1000)
+        self.assertAlmostEqual(hunt.gold_equivalent,
+                               40 * econ.HUNTING_YIELD_RATIO * econ.DEFAULT_XP_GOLD)
+
+    def test_cost_scales_with_monster_tier(self):
+        tier1 = econ.hunting_cost(monster_level=1)
+        tier2 = econ.hunting_cost(monster_level=16)  # ceil(16/15) == 2
+        self.assertEqual(tier1, {"gold": 3, "energy": 3})
+        self.assertEqual(tier2, {"gold": 9, "energy": 3})
+
     def test_none_without_enough_energy(self):
-        self.assertIsNone(econ.hunting_candidate(self._state(energy=1), self.economy))
+        self.assertIsNone(econ.hunting_candidate(
+            "forestspider_lvl1_2", 1, self.economy, econ.BATTLE_XP, energy=1, gold=1000))
 
     def test_none_without_enough_gold(self):
-        self.assertIsNone(econ.hunting_candidate(self._state(gold=0), self.economy))
+        self.assertIsNone(econ.hunting_candidate(
+            "forestspider_lvl1_2", 1, self.economy, econ.BATTLE_XP, energy=50, gold=0))
 
     def test_loses_to_battle_on_energy_efficiency(self):
         """Measured live: 11 xp for 3 energy vs battle's 22 xp for 1 — battle wins."""
-        hunt = econ.hunting_candidate(self._state(), self.economy)
+        hunt = econ.hunting_candidate(
+            "forestspider_lvl1_2", 1, self.economy, econ.BATTLE_XP,
+            energy=50, gold=1000)
         battle = econ.battle_candidate("forestspider_lvl1_2", self.economy)
         self.assertLess(hunt.gold_per_energy, battle.gold_per_energy)
 

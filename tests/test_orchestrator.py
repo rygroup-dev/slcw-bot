@@ -201,6 +201,33 @@ class SelectionTests(unittest.TestCase):
         candidates = orchestrator.build_candidates(state)
         self.assertIn("startHunting", [c.action for c in candidates])
 
+    def test_hunting_and_battle_target_the_same_monster(self):
+        """Hunting is not hardcoded — it tracks whatever select_monster picks,
+        which is why it scales with level, stats and equipment over time."""
+        orchestrator = make()
+        state = state_of(currentLocationId="farm_3", energy=50, balance=1000)
+        candidates = orchestrator.build_candidates(state)
+        by_action = {c.action: c for c in candidates}
+        self.assertIn("battle", by_action)
+        self.assertIn("startHunting", by_action)
+        self.assertEqual(by_action["battle"].params["monsterId"],
+                         by_action["startHunting"].params["monsterId"])
+
+    def test_hunting_uses_learned_xp_once_the_monster_has_been_fought(self):
+        api = FakeApi()
+        orchestrator = make(api=api)
+        orchestrator.combat.record_battle(
+            "forestspider_lvl1_2", {"winner": "player", "xp": 40}, turns=3, damage_taken=5)
+        # Deterministic: never explore an untried monster, so the only
+        # measured one (forestspider, just recorded above) is always picked.
+        orchestrator.rng.random = lambda: 1.0
+        state = state_of(currentLocationId="farm_1", energy=50, balance=1000)
+        candidates = orchestrator.build_candidates(state)
+        hunt = next(c for c in candidates if c.action == "startHunting")
+        self.assertEqual(hunt.params["monsterId"], "forestspider_lvl1_2")
+        self.assertAlmostEqual(hunt.gold_equivalent,
+                               40 * econ.HUNTING_YIELD_RATIO * econ.DEFAULT_XP_GOLD)
+
 
 class BattleTests(unittest.TestCase):
     def test_battle_settles_activity_on_normal_win(self):
