@@ -21,6 +21,7 @@ from .config import DATA, Config
 from .market import MarketSnapshot
 from .orchestrator import Orchestrator
 from .transport import ApiError, Transport, TransportError
+from .vault import SLEEP_HOURS_RANGE
 
 FLEET_STATE = DATA / "fleet_state.json"
 
@@ -186,6 +187,14 @@ class Fleet:
                     f"🌱 <b>{wallet['id']}</b> ({wallet.get('nickname', '')}) "
                     f"selesai onboarding\n"
                     f"<code>{', '.join(sorted(results))}</code>")
+
+            # Wallets created before SLEEP_HOURS_RANGE narrowed to 3-4h are
+            # still carrying whatever 6-9h value they were given at creation
+            # — shrink it once, in place, rather than leaving old accounts on
+            # the old schedule forever.
+            if wallet.get("sleep_hours", 0) > SLEEP_HOURS_RANGE[1]:
+                self.vault.update(wallet["id"],
+                                  sleep_hours=round(random.uniform(*SLEEP_HOURS_RANGE), 2))
 
             state = api.get_player(session)
             self.refresh_market(api, session)

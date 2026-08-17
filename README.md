@@ -6,7 +6,7 @@
 
 [![tests](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml/badge.svg)](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml)
 [![python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab?logo=python&logoColor=white)](https://www.python.org/)
-[![tests](https://img.shields.io/badge/tests-560%20passing-4c1)](tests/)
+[![tests](https://img.shields.io/badge/tests-561%20passing-4c1)](tests/)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 Every action is priced in gold-per-hour before it runs.
@@ -435,7 +435,7 @@ hidden prompt that keeps the secret out of shell history. Accepted formats:
 > key so a truncated paste fails at import.
 
 Each wallet gets its own browser persona, session, error counter, schedule, and a
-persistent 6–9 hour daily offline window. A failing wallet pauses **itself** and
+persistent 3–4 hour daily offline window. A failing wallet pauses **itself** and
 leaves the rest of the fleet running.
 
 ### Wallet tools
@@ -478,7 +478,7 @@ The goal is not to be undetectable — nothing is. It is to not stand out.
 | **Headers** | full browser set; personas are sticky per wallet, so an account always looks like the same browser |
 | **Sessions** | log in once, refresh thereafter — roughly **1 login/day** instead of 288 |
 | **Timing** | wake times derive from the *server's* activity clock plus a log-normal reaction delay (90s median, long tail) |
-| **Rhythm** | each wallet sleeps 6–9 hours daily, anchored to its own hour |
+| **Rhythm** | each wallet sleeps 3–4 hours daily, anchored to its own hour |
 | **Retries** | transient failures are absorbed in the transport, so noise never trips a breaker |
 
 > [!IMPORTANT]
@@ -500,7 +500,6 @@ See [`.env.example`](.env.example) for the annotated full list.
 | `SLCW_DRY_RUN` | `true` | decide and log, never call the game |
 | `SLCW_REACTION_MEDIAN_SECONDS` | `90` | median delay after a server activity ends |
 | `SLCW_IDLE_MIN/MAX_SECONDS` | `240`/`900` | poll spacing when nothing is pending |
-| `SLCW_SLEEP_MIN/MAX_HOURS` | `6`/`9` | daily offline window per wallet |
 | `SLCW_MAX_ERRORS` | `3` | consecutive real errors before a wallet self-pauses |
 | `SLCW_REST_HP_RATIO` | `0.55` | rest below this fraction of health |
 | `SLCW_GOLD_RESERVE` | `500` | gold-funded actions never spend below this |

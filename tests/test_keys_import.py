@@ -185,9 +185,11 @@ class VaultImportTests(unittest.TestCase):
         self.assertIn(wallet["id"], ids)
 
     def test_import_gets_its_own_sleep_schedule(self):
+        from slcw.vault import SLEEP_HOURS_RANGE
         wallet = self.vault.import_wallet(str(self.keypair), str(self.keypair.pubkey()))
         self.assertIn("sleep_anchor_hour", wallet)
-        self.assertGreaterEqual(wallet["sleep_hours"], 6.0)
+        self.assertGreaterEqual(wallet["sleep_hours"], SLEEP_HOURS_RANGE[0])
+        self.assertLessEqual(wallet["sleep_hours"], SLEEP_HOURS_RANGE[1])
 
     def test_ciphertext_hides_the_imported_key(self):
         self.vault.import_wallet(str(self.keypair), str(self.keypair.pubkey()))

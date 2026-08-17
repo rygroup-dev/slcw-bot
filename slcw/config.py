@@ -57,9 +57,10 @@ class Config:
     # Poll spacing when a wallet has nothing pending.
     idle_min_seconds: float = field(default_factory=lambda: _float("SLCW_IDLE_MIN_SECONDS", 240.0))
     idle_max_seconds: float = field(default_factory=lambda: _float("SLCW_IDLE_MAX_SECONDS", 900.0))
-    # Daily offline window per wallet.
-    sleep_min_hours: float = field(default_factory=lambda: _float("SLCW_SLEEP_MIN_HOURS", 6.0))
-    sleep_max_hours: float = field(default_factory=lambda: _float("SLCW_SLEEP_MAX_HOURS", 9.0))
+    # The daily offline window per wallet (sleep_anchor_hour, sleep_hours) is
+    # drawn once at wallet creation and stored per-wallet in the vault
+    # (slcw.vault), not read from here — SLCW_SLEEP_MIN_HOURS/MAX_HOURS used
+    # to exist as config fields but nothing ever read them.
 
     # --- resilience ------------------------------------------------------
     max_consecutive_errors: int = field(default_factory=lambda: _int("SLCW_MAX_ERRORS", 3))

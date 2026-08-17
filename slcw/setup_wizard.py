@@ -117,8 +117,6 @@ def render_env(values: dict) -> str:
               f"SLCW_REACTION_MAX_SECONDS={values.get('SLCW_REACTION_MAX_SECONDS', '480')}",
               f"SLCW_IDLE_MIN_SECONDS={values.get('SLCW_IDLE_MIN_SECONDS', '240')}",
               f"SLCW_IDLE_MAX_SECONDS={values.get('SLCW_IDLE_MAX_SECONDS', '900')}",
-              f"SLCW_SLEEP_MIN_HOURS={values.get('SLCW_SLEEP_MIN_HOURS', '6')}",
-              f"SLCW_SLEEP_MAX_HOURS={values.get('SLCW_SLEEP_MAX_HOURS', '9')}",
               "", "# --- resilience ---",
               f"SLCW_MAX_ERRORS={values.get('SLCW_MAX_ERRORS', '3')}",
               f"SLCW_HTTP_MAX_ATTEMPTS={values.get('SLCW_HTTP_MAX_ATTEMPTS', '4')}",

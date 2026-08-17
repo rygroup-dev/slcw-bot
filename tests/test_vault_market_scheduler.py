@@ -88,6 +88,16 @@ class VaultTests(unittest.TestCase):
         anchors = {w["sleep_anchor_hour"] for w in created}
         self.assertGreater(len(anchors), 1, "wallets must not share one sleep window")
 
+    def test_sleep_hours_falls_within_the_configured_range(self):
+        from slcw.vault import SLEEP_HOURS_RANGE
+        vault = Vault()
+        vault.unlock("passphrase here")
+        created = vault.create_wallets(10)
+        low, high = SLEEP_HOURS_RANGE
+        for wallet in created:
+            self.assertGreaterEqual(wallet["sleep_hours"], low)
+            self.assertLessEqual(wallet["sleep_hours"], high)
+
     def test_legacy_plaintext_is_imported_and_removed(self):
         legacy = Path(self.tmp.name) / "wallets.json"
         legacy.write_text(json.dumps([{

@@ -30,6 +30,10 @@ SCRYPT_R = 8
 SCRYPT_P = 1
 KEY_LENGTH = 32
 
+# Each wallet's daily offline window is drawn once here and stored per-wallet,
+# so restarting the fleet never reshuffles an account's schedule.
+SLEEP_HOURS_RANGE = (3.0, 4.0)
+
 ADJECTIVES = ("Ashen", "Iron", "Silent", "Storm", "Raven", "Ember", "Frost", "Violet",
               "Amber", "Hollow", "Bright", "Quiet", "Rust", "Pale", "Wilder", "Dusk")
 NOUNS = ("Vale", "Forge", "Crown", "Warden", "Harbor", "Spire", "Trail", "Keeper",
@@ -190,7 +194,7 @@ class Vault:
                 # Each wallet sleeps on its own schedule so daily activity patterns
                 # differ between accounts instead of moving in lockstep.
                 "sleep_anchor_hour": random.randint(0, 23),
-                "sleep_hours": round(random.uniform(6.0, 9.0), 2),
+                "sleep_hours": round(random.uniform(*SLEEP_HOURS_RANGE), 2),
             }
             wallets.append(record)
             created.append(record)
@@ -234,7 +238,7 @@ class Vault:
             "onboarded": True,
             "imported": True,
             "sleep_anchor_hour": random.randint(0, 23),
-            "sleep_hours": round(random.uniform(6.0, 9.0), 2),
+            "sleep_hours": round(random.uniform(*SLEEP_HOURS_RANGE), 2),
         }
         wallets.append(record)
         self._persist()
@@ -273,7 +277,7 @@ class Vault:
                 "is_primary": len(self._wallets) == 0,
                 "onboarded": True,
                 "sleep_anchor_hour": random.randint(0, 23),
-                "sleep_hours": round(random.uniform(6.0, 9.0), 2),
+                "sleep_hours": round(random.uniform(*SLEEP_HOURS_RANGE), 2),
             })
             added += 1
         self._persist()
