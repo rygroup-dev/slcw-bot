@@ -39,6 +39,23 @@ def _extract_summary(action: str, result: dict) -> dict:
         if isinstance(nested, dict):
             return nested.get("rewardSummary") or {}
         return {}
+    if action == "completeNewbieQuest":
+        # Its own shape entirely: {"success": true, "xpGained": N, "nextQuest": M}.
+        # No "rewardSummary" at all, so every call was silently recording nothing.
+        xp = result.get("xpGained")
+        if xp is None:
+            return {}
+        return {"type": "newbieQuest", "xp": int(xp)}
+    if action == "claimTaskReward":
+        # Documented in tasks.py as {goldAwarded, allTasksCompleted} — also not
+        # "rewardSummary", found while checking every action against the same
+        # class of bug the two entries above already had. Never yet fired live
+        # (no wallet has finished a full hunt task's kill count), so this was
+        # still latent rather than measured missing.
+        gold = result.get("goldAwarded")
+        if gold is None:
+            return {}
+        return {"type": "hunt_task", "gold": int(gold)}
     return result.get("rewardSummary") or {}
 
 

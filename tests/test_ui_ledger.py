@@ -302,6 +302,19 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual(totals.items["shadowclaw"], 1)
         self.assertEqual(totals.battles_won, 1)
 
+    def test_records_newbie_quest_xp(self):
+        # completeNewbieQuest's own shape: {"success": true, "xpGained": N,
+        # "nextQuest": M} — no "rewardSummary" key at all.
+        ledger_mod.record("wallet-01", "completeNewbieQuest",
+                          {"success": True, "xpGained": 400, "nextQuest": 6})
+        self.assertEqual(ledger_mod.totals().xp, 400)
+
+    def test_records_hunt_task_gold(self):
+        # claimTaskReward's own shape: {goldAwarded, allTasksCompleted}.
+        ledger_mod.record("wallet-01", "claimTaskReward",
+                          {"goldAwarded": 5000, "allTasksCompleted": False})
+        self.assertEqual(ledger_mod.totals().gold, 5000)
+
     def test_rewardless_actions_write_nothing(self):
         self.assertIsNone(ledger_mod.record("wallet-01", "startRelax", {"success": True}))
         self.assertFalse(self.path.exists())
