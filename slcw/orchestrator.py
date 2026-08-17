@@ -29,6 +29,16 @@ BATTLE_MIN_HEALTH_RATIO = 0.45
 # use is never spent restoring a handful of points.
 ENERGY_REFILL_RATIO = 0.35
 
+# completeNewbieQuest() takes no arguments and was observed live paying 400,
+# then 500 XP with nextQuest incrementing (6, then 7) — a free, escalating
+# tutorial chain. There is no status call to say when it ends, so a benign
+# rejection past the last step is indistinguishable from "not there yet"
+# until it is measured live. This cap bounds the downside: past it, a wallet
+# that has actually exhausted the chain would otherwise retry it every cycle
+# forever, losing that cycle's battle/farm turn to a call that can never
+# succeed. Deliberately conservative pending a live read of the real ceiling.
+NEWBIE_QUEST_MAX_ATTEMPTS = 15
+
 # The server accepts a stack, but a smaller batch keeps rewards legible
 # in the ledger and bounded if a chest type turns out to be unusual.
 MAX_CHESTS_PER_OPEN = 5
@@ -168,6 +178,13 @@ class Orchestrator:
                 f"{state.attribute_points} point(s) unspent → {target} "
                 f"({self.config.build} build)")]
 
+        # A tutorial-chain quest that pays pure XP for a no-argument call —
+        # free value, so it is taken before anything that costs a resource.
+        if state.newbie_quest < NEWBIE_QUEST_MAX_ATTEMPTS:
+            return [econ.free_candidate(
+                "completeNewbieQuest", {},
+                f"newbie quest chain (step {state.newbie_quest})")]
+
         # Three free refills a day, and energy gates almost everything. Only worth
         # taking once the bar has drained enough that a refill is not wasted.
         if (state.free_refills_left() > 0
@@ -187,10 +204,19 @@ class Orchestrator:
                     f"{chest.quantity}× {chest.template_id} unopened")]
 
             equip = inv_mod.next_equip(inventory, state.equipment)
-            if equip is not None and not equip.is_upgrade:
+            if equip is not None:
+                if not equip.is_upgrade:
+                    return [econ.free_candidate(
+                        "equipItem", {"instanceId": equip.instance_id},
+                        f"{equip.template_id} into empty {equip.slot} slot")]
+                # A strictly higher tier in an occupied slot is a pure gain
+                # too, but the game needs the worn piece removed first —
+                # unequipItem, then equipItem, as one atomic decision.
                 return [econ.free_candidate(
-                    "equipItem", {"instanceId": equip.instance_id},
-                    f"{equip.template_id} into empty {equip.slot} slot")]
+                    "upgradeEquip",
+                    {"slot": equip.slot, "instanceId": equip.instance_id},
+                    f"{equip.template_id} upgrades {equip.slot} "
+                    f"(tier {equip.replaces_tier} → held)")]
 
         # A finished hunt task is gold sitting there; accepting the next one is free.
         if task_status is not None and task_status.eligible:
@@ -198,6 +224,13 @@ class Orchestrator:
                 return [econ.free_candidate(
                     "claimTaskReward", {},
                     f"task reward of {task_status.task.gold_reward:,} gold ready")]
+            if (task_status.can_fight and state.energy >= econ.BATTLE_ENERGY
+                    and state.health_ratio >= BATTLE_MIN_HEALTH_RATIO):
+                task = task_status.task
+                return [econ.free_candidate(
+                    "startTaskBattle", {"monsterId": task.monster_id},
+                    f"task battle {task.kills_progress}/{task.kills_required} "
+                    f"vs {task.monster_id} for {task.gold_reward:,}g")]
             if task_status.can_accept:
                 return [econ.free_candidate(
                     "acceptTask", {},
@@ -451,6 +484,8 @@ class Orchestrator:
             return self.api.purchase_crafting_item(session, candidate.params)
         if action == "startTravel":
             return self.api.start_travel(session, candidate.params["destinationId"])
+        if action == "completeNewbieQuest":
+            return self.api.complete_newbie_quest(session)
         if action == "acceptTask":
             return self.api.accept_task(session)
         if action == "claimTaskReward":
@@ -461,8 +496,14 @@ class Orchestrator:
                 candidate.params["quantity"])
         if action == "equipItem":
             return self.api.equip_item(session, candidate.params["instanceId"])
+        if action == "upgradeEquip":
+            unequip_result = self.api.unequip_item(session, candidate.params["slot"])
+            equip_result = self.api.equip_item(session, candidate.params["instanceId"])
+            return {"unequip": unequip_result, "equip": equip_result}
         if action == "battle":
             return self.run_battle(session, candidate.params["monsterId"])
+        if action == "startTaskBattle":
+            return self.run_task_battle(session, candidate.params["monsterId"])
         raise GuardrailViolation(f"orchestrator has no executor for {action!r}")
 
     def run_battle(self, session, monster_id: str) -> dict:
@@ -501,6 +542,51 @@ class Orchestrator:
         # Record what the fight actually cost and returned. Drop tables are
         # server-side, so this is the only way the engine can learn a monster's
         # worth rather than assume it.
+        summary = (reward or {}).get("rewardSummary") or {}
+        self.combat.record_battle(monster_id, summary, turns, damage_taken)
+        self.combat.save()
+        return {
+            "battleId": battle_id,
+            "monsterId": monster_id,
+            "turns": turns,
+            "reached_turn_cap": not finished,
+            "reward": reward,
+        }
+
+    def run_task_battle(self, session, monster_id: str) -> dict:
+        """Fight the hunt task's assigned monster to a conclusion.
+
+        startTaskBattle takes no arguments — the server already knows which
+        monster the active task points at — but the turn loop that follows is
+        the same processTurn/finishActivity cycle as a normal battle, so this
+        mirrors run_battle rather than duplicating it blind.
+        """
+        started = self.api.start_task_battle(session)
+        battle_id = started.get("battleId")
+        if not battle_id:
+            raise ApiError("startTaskBattle returned no battleId")
+
+        turns = 0
+        damage_taken = 0
+        finished = False
+        for _ in range(self.config.battle_max_turns):
+            time.sleep(self.rng.uniform(1.8, 3.6))
+            attack, defense = self.combat.choose_zones(monster_id, self.rng)
+            outcome = self.api.process_turn(session, battle_id, attack, defense)
+            turns += 1
+            turn_result = outcome.get("turnResult") or {}
+            if turn_result:
+                self.combat.observe(monster_id, turn_result)
+                incoming = turn_result.get("monster") or {}
+                if incoming.get("type") in ("hit", "crit"):
+                    damage_taken += int(incoming.get("damage", 0) or 0)
+            if outcome.get("isOver"):
+                finished = True
+                break
+
+        time.sleep(self.rng.uniform(1.5, 3.0))
+        reward = self.api.finish_activity(session)
+
         summary = (reward or {}).get("rewardSummary") or {}
         self.combat.record_battle(monster_id, summary, turns, damage_taken)
         self.combat.save()

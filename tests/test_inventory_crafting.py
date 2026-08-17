@@ -63,7 +63,7 @@ class ChestTests(unittest.TestCase):
             "level": 6, "grade": 1, "energy": 80, "maxEnergy": 100, "balance": 5000,
             "currentHealth": 130, "currentMana": 130, "currentLocationId": "city_2",
             "attributes": {"vitality": 3, "wisdom": 3},
-            "claimedInitialRewardsV2": list(range(1, 7)), "activity": None,
+            "claimedInitialRewardsV2": list(range(1, 7)), "newbieQuest": 999, "activity": None,
             "freeEnergyRefillsToday": 3, "lastFreeEnergyRefillDate": "2099-01-01"})
         parsed = inv.parse_inventory(document(("small_equip_chest", 3, None)))
         decision = orchestrator.decide_and_act(
@@ -79,7 +79,7 @@ class ChestTests(unittest.TestCase):
             "level": 6, "grade": 1, "energy": 80, "maxEnergy": 100, "balance": 5000,
             "currentHealth": 130, "currentMana": 130, "currentLocationId": "city_2",
             "attributes": {"vitality": 3, "wisdom": 3},
-            "claimedInitialRewardsV2": list(range(1, 7)), "activity": None,
+            "claimedInitialRewardsV2": list(range(1, 7)), "newbieQuest": 999, "activity": None,
             "freeEnergyRefillsToday": 3, "lastFreeEnergyRefillDate": "2099-01-01"})
         parsed = inv.parse_inventory(document(("small_equip_chest", 999, None)))
         candidates = orchestrator.build_candidates(state, inventory=parsed)
@@ -150,7 +150,7 @@ class EquipTests(unittest.TestCase):
             "level": 6, "grade": 1, "energy": 80, "maxEnergy": 100, "balance": 5000,
             "currentHealth": 130, "currentMana": 130, "currentLocationId": "city_2",
             "attributes": {"vitality": 3, "wisdom": 3}, "equipment": {},
-            "claimedInitialRewardsV2": list(range(1, 7)), "activity": None,
+            "claimedInitialRewardsV2": list(range(1, 7)), "newbieQuest": 999, "activity": None,
             "freeEnergyRefillsToday": 3, "lastFreeEnergyRefillDate": "2099-01-01"})
         parsed = inv.parse_inventory(document(("plate_helmet_t1", 1, "inst-1")))
         decision = orchestrator.decide_and_act(
@@ -158,8 +158,8 @@ class EquipTests(unittest.TestCase):
         self.assertEqual(decision.action, "equipItem")
         self.assertEqual(equipped["id"], "inst-1")
 
-    def test_swaps_are_not_performed_automatically(self):
-        """A swap needs an unequip first, so it is never chosen unattended."""
+    def test_swap_is_offered_as_a_single_upgrade_action(self):
+        """A strictly higher tier in an occupied slot is still a pure gain."""
         orchestrator = make(config=Config(enabled=True, dry_run=True), api=FakeApi())
         state = parse_player({
             "level": 6, "grade": 1, "energy": 80, "maxEnergy": 100, "balance": 5000,
@@ -168,11 +168,31 @@ class EquipTests(unittest.TestCase):
             "equipment": {slot: {"templateId": f"plate_helmet_t1"}
                           for slot in ("head", "chest", "gauntlets", "greaves",
                                        "boots", "two_hand_weapon")},
-            "claimedInitialRewardsV2": list(range(1, 7)), "activity": None,
+            "claimedInitialRewardsV2": list(range(1, 7)), "newbieQuest": 999, "activity": None,
             "freeEnergyRefillsToday": 3, "lastFreeEnergyRefillDate": "2099-01-01"})
         parsed = inv.parse_inventory(document(("plate_helmet_t5", 1, "up")))
         candidates = orchestrator.build_candidates(state, inventory=parsed)
-        self.assertNotIn("equipItem", [c.action for c in candidates])
+        self.assertEqual(candidates[0].action, "upgradeEquip")
+        self.assertEqual(candidates[0].params, {"slot": "head", "instanceId": "up"})
+
+    def test_orchestrator_unequips_before_equipping_an_upgrade(self):
+        api = FakeApi()
+        calls = []
+        api.unequip_item = lambda s, slot: calls.append(("unequip", slot)) or {"success": True}
+        api.equip_item = lambda s, i: calls.append(("equip", i)) or {"success": True}
+        orchestrator = make(config=Config(enabled=True, dry_run=False), api=api)
+        state = parse_player({
+            "level": 6, "grade": 1, "energy": 80, "maxEnergy": 100, "balance": 5000,
+            "currentHealth": 130, "currentMana": 130, "currentLocationId": "city_2",
+            "attributes": {"vitality": 3, "wisdom": 3},
+            "equipment": {"head": {"templateId": "plate_helmet_t1"}},
+            "claimedInitialRewardsV2": list(range(1, 7)), "newbieQuest": 999, "activity": None,
+            "freeEnergyRefillsToday": 3, "lastFreeEnergyRefillDate": "2099-01-01"})
+        parsed = inv.parse_inventory(document(("plate_helmet_t5", 1, "up")))
+        decision = orchestrator.decide_and_act(
+            {"id": "w1"}, None, state, None, None, None, parsed)
+        self.assertEqual(decision.action, "upgradeEquip")
+        self.assertEqual(calls, [("unequip", "head"), ("equip", "up")])
 
 
 class CraftingTests(unittest.TestCase):
@@ -246,7 +266,7 @@ class CraftingTests(unittest.TestCase):
             "level": 60, "grade": 7, "energy": 100, "maxEnergy": 100,
             "balance": 10**7, "currentHealth": 130, "currentMana": 130,
             "currentLocationId": "city_1", "attributes": {"vitality": 3, "wisdom": 3},
-            "claimedInitialRewardsV2": list(range(1, 61)), "activity": None,
+            "claimedInitialRewardsV2": list(range(1, 61)), "newbieQuest": 999, "activity": None,
             "freeEnergyRefillsToday": 3, "lastFreeEnergyRefillDate": "2099-01-01"})
         candidates = orchestrator.build_candidates(
             state, None, {"copper_ingot": 999}, inventory=None)

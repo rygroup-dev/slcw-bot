@@ -214,7 +214,7 @@ class OrchestratorTests(unittest.TestCase):
                "balance": 5000, "currentHealth": 130, "currentMana": 130,
                "currentLocationId": "city_1", "attributePoints": 0,
                "attributes": {"vitality": 3, "wisdom": 3},
-               "claimedInitialRewardsV2": list(range(1, 7)), "activity": None}
+               "claimedInitialRewardsV2": list(range(1, 7)), "newbieQuest": 999, "activity": None}
         doc.update(overrides)
         return parse_player(doc)
 
@@ -259,7 +259,7 @@ class FreeEnergyTests(unittest.TestCase):
             "level": 6, "grade": 1, "energy": energy, "maxEnergy": 100,
             "balance": 100, "currentHealth": 130, "currentMana": 130,
             "currentLocationId": "city_2", "attributes": {"vitality": 3, "wisdom": 3},
-            "claimedInitialRewardsV2": list(range(1, 7)), "activity": None,
+            "claimedInitialRewardsV2": list(range(1, 7)), "newbieQuest": 999, "activity": None,
             "freeEnergyRefillsToday": used, "lastFreeEnergyRefillDate": date})
 
     def test_three_refills_available_per_day(self):
@@ -340,7 +340,7 @@ class CatalystTests(unittest.TestCase):
             "level": 6, "grade": 1, "energy": 80, "maxEnergy": 100, "balance": 5000,
             "currentHealth": 130, "currentMana": 130, "currentLocationId": "city_1",
             "attributes": {"vitality": 3, "wisdom": 3},
-            "claimedInitialRewardsV2": list(range(1, 7)), "activity": None})
+            "claimedInitialRewardsV2": list(range(1, 7)), "newbieQuest": 999, "activity": None})
         # Raw material in hand, zero catalysts — exactly the blocked case.
         decision = orchestrator.decide_and_act(
             {"id": "w1"}, None, state, bids(copper_ingot=888), {"copper_ore": 90})
@@ -354,7 +354,7 @@ class CatalystTests(unittest.TestCase):
             "level": 6, "grade": 1, "energy": 80, "maxEnergy": 100, "balance": 5000,
             "currentHealth": 130, "currentMana": 130, "currentLocationId": "city_1",
             "attributes": {"vitality": 3, "wisdom": 3},
-            "claimedInitialRewardsV2": list(range(1, 7)), "activity": None})
+            "claimedInitialRewardsV2": list(range(1, 7)), "newbieQuest": 999, "activity": None})
         candidates = orchestrator.build_candidates(state, bids(copper_ingot=888), {})
         self.assertNotIn("purchaseCraftingItem", [c.action for c in candidates])
 
@@ -364,7 +364,7 @@ class CatalystTests(unittest.TestCase):
             "level": 6, "grade": 1, "energy": 80, "maxEnergy": 100, "balance": 5000,
             "currentHealth": 130, "currentMana": 130, "currentLocationId": "city_1",
             "attributes": {"vitality": 3, "wisdom": 3},
-            "claimedInitialRewardsV2": list(range(1, 7)), "activity": None})
+            "claimedInitialRewardsV2": list(range(1, 7)), "newbieQuest": 999, "activity": None})
         candidates = orchestrator.build_candidates(
             state, build_snapshot([]), {"copper_ore": 90})
         self.assertNotIn("purchaseCraftingItem", [c.action for c in candidates])

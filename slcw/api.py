@@ -125,6 +125,17 @@ class GameApi:
     def start_battle(self, session, monster_id: str) -> dict:
         return self._call(session, "startBattle", {"monsterId": monster_id})
 
+    def start_hunting(self, session, monster_id: str, monster_level: int,
+                      mode: str, cycles: int = 0, hours: int = 0) -> dict:
+        """Passive/idle combat against one monster — not part of the decision
+        loop yet. From the bundle: cost is 3*cycles*3^(tier-1) gold plus
+        3*cycles energy for energy mode (tier = ceil(monster_level/15)), or
+        round(hours/8*4500) + 60*hours*3^(tier-1) gold for gold mode. Payoff
+        has never been observed live."""
+        return self._call(session, "startHunting", {
+            "monsterId": monster_id, "monsterLevel": monster_level,
+            "mode": mode, "cycles": cycles, "hours": hours})
+
     def process_turn(self, session, battle_id: str, attack: str, defense: str) -> dict:
         return self._call(session, "processTurn", {
             "battleId": battle_id, "attackZone": attack, "defenseZone": defense})
@@ -140,6 +151,9 @@ class GameApi:
 
     def equip_item(self, session, instance_id: str) -> dict:
         return self._call(session, "equipItem", {"instanceId": instance_id})
+
+    def unequip_item(self, session, slot_name: str) -> dict:
+        return self._call(session, "unequipItem", {"slotName": slot_name})
 
     def complete_newbie_quest(self, session) -> dict:
         return self._call(session, "completeNewbieQuest")

@@ -181,7 +181,7 @@ class OrchestratorTests(unittest.TestCase):
             "level": 6, "grade": 1, "energy": 80, "maxEnergy": 100, "balance": 100,
             "currentHealth": 130, "currentMana": 130, "currentLocationId": "city_2",
             "attributePoints": points, "attributes": merged,
-            "claimedInitialRewardsV2": list(range(1, 7)), "activity": None})
+            "claimedInitialRewardsV2": list(range(1, 7)), "newbieQuest": 999, "activity": None})
 
     def test_points_are_spent_by_the_configured_build(self):
         api = FakeApi()
@@ -268,7 +268,7 @@ class LevelingTests(unittest.TestCase):
             "level": 1, "grade": 1, "xp": 500, "energy": 80, "maxEnergy": 100,
             "balance": 100, "currentHealth": 130, "currentMana": 130,
             "currentLocationId": "city_2", "attributes": dict(BASE),
-            "claimedInitialRewardsV2": [1], "activity": None})
+            "claimedInitialRewardsV2": [1], "newbieQuest": 999, "activity": None})
         decision = orchestrator.decide_and_act({"id": "w1"}, None, state)
         self.assertEqual(decision.action, "buyLevel")
         self.assertEqual(decision.params["booster"], "none")
@@ -279,6 +279,6 @@ class LevelingTests(unittest.TestCase):
             "level": 15, "grade": 1, "xp": 10**6, "energy": 80, "maxEnergy": 100,
             "balance": 100, "currentHealth": 130, "currentMana": 130,
             "currentLocationId": "city_2", "attributes": dict(BASE),
-            "claimedInitialRewardsV2": list(range(1, 16)), "activity": None})
+            "claimedInitialRewardsV2": list(range(1, 16)), "newbieQuest": 999, "activity": None})
         candidates = orchestrator.build_candidates(state)
         self.assertNotIn("buyLevel", [c.action for c in candidates])

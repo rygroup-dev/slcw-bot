@@ -48,6 +48,13 @@ class FakeApi:
         self.calls.append(("startBattle", {"monsterId": monster_id}))
         return {"battleId": "battle-1"}
 
+    def start_task_battle(self, session):
+        self.calls.append(("startTaskBattle", {}))
+        return {"battleId": "task-battle-1"}
+
+    def complete_newbie_quest(self, session):
+        return self._record("completeNewbieQuest")
+
     def process_turn(self, session, battle_id, attack, defense):
         self.calls.append(("processTurn", {"attack": attack, "defense": defense}))
         if self.turn_index < len(self.turn_script):
@@ -68,7 +75,7 @@ def state_of(**overrides):
         "currentLocationId": "city_2",
         "attributes": {"wisdom": 3, "vitality": 3},
         "claimedInitialRewardsV2": list(range(1, 16)),
-        "activity": None,
+        "newbieQuest": 999, "activity": None,
     }
     doc.update(overrides)
     return parse_player(doc)
@@ -106,6 +113,21 @@ class PriorityTests(unittest.TestCase):
         decision = orchestrator.decide_and_act({"id": "w1"}, None, state)
         self.assertEqual(decision.action, "claimInitialReward")
         self.assertEqual(decision.params["level"], 3)
+
+    def test_pending_newbie_quest_is_completed_before_gameplay(self):
+        api = FakeApi()
+        orchestrator = make(api=api)
+        state = state_of(newbieQuest=6)
+        decision = orchestrator.decide_and_act({"id": "w1"}, None, state)
+        self.assertEqual(decision.action, "completeNewbieQuest")
+        self.assertEqual(api.calls[0], ("completeNewbieQuest", {}))
+
+    def test_newbie_quest_is_capped_so_it_cannot_stall_the_fleet_forever(self):
+        from slcw.orchestrator import NEWBIE_QUEST_MAX_ATTEMPTS
+        orchestrator = make(api=FakeApi())
+        state = state_of(newbieQuest=NEWBIE_QUEST_MAX_ATTEMPTS)
+        candidates = orchestrator.build_candidates(state)
+        self.assertNotIn("completeNewbieQuest", [c.action for c in candidates])
 
     def test_unspent_attribute_points_are_used(self):
         api = FakeApi()

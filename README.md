@@ -6,7 +6,7 @@
 
 [![tests](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml/badge.svg)](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml)
 [![python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab?logo=python&logoColor=white)](https://www.python.org/)
-[![tests](https://img.shields.io/badge/tests-543%20passing-4c1)](tests/)
+[![tests](https://img.shields.io/badge/tests-549%20passing-4c1)](tests/)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 Every action is priced in gold-per-hour before it runs.
@@ -338,6 +338,28 @@ forestspider_lvl1_2 · 340 rounds
 18% of moves stay random, which keeps the estimates honest if the monster changes
 and stops our own choices from becoming predictable.
 
+### Every free system gets found and used
+
+Anything that returns real value at zero risk is taken before anything scored:
+
+- **Hunt tasks** (level 10+) — a free gold-reward chain gated behind a level, not a
+  cost. The engine accepts the next task, fights the specific monster it assigns
+  with `startTaskBattle`, and claims the reward the moment it completes.
+- **Newbie quest chain** — a tutorial line that pays escalating XP for a bare,
+  argument-free call. There is no status endpoint to say when it ends, so retries
+  are capped rather than left to hammer a dead chain forever.
+- **Equipment upgrades** — a strictly better item in an already-full slot used to
+  sit there unused, because equipping into an occupied slot needs the worn piece
+  removed first. The engine now does both calls — unequip, then equip — as one
+  decision, so gear stops going stale in inventory.
+
+Two systems were checked live and found to be dead ends, on purpose rather than by
+accident: **mining quests** return a live HTTP 404 (no deployed function answers
+the name, whatever the frontend bundle implies), and **citizenship** — the gate in
+front of citizenship quests — was confirmed to cost diamonds, not gold, on a real
+account with plenty of gold and zero diamonds. Both stay out of the decision loop
+for exactly that reason, recorded in `guardrails.py`.
+
 ---
 
 ## Guardrails
@@ -346,7 +368,7 @@ and stops our own choices from becoming predictable.
 path to the network passes through it, so a denied call fails before a request is
 even constructed — no caller has to remember.
 
-All **70 callables** found in the game's frontend are classified — each is either
+All **89 callables** found in the game's frontend are classified — each is either
 allowed or denied **with a recorded reason**, so none is left to chance.
 
 **Permanently denied. Not configurable, not toggleable:**

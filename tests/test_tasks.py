@@ -1,3 +1,4 @@
+import dataclasses
 import unittest
 
 from slcw import tasks
@@ -75,7 +76,7 @@ class OrchestratorTests(unittest.TestCase):
             "balance": 5000, "currentHealth": 130, "currentMana": 130,
             "currentLocationId": "city_2", "attributePoints": 0,
             "attributes": {"vitality": 3, "wisdom": 3},
-            "claimedInitialRewardsV2": list(range(1, 13)), "activity": None,
+            "claimedInitialRewardsV2": list(range(1, 13)), "newbieQuest": 999, "activity": None,
             "freeEnergyRefillsToday": 3, "lastFreeEnergyRefillDate": "2099-01-01"})
 
     def _status(self, **overrides):
@@ -120,6 +121,25 @@ class OrchestratorTests(unittest.TestCase):
         candidates = orchestrator.build_candidates(
             self._state(), task_status=self._status(allDone=True))
         self.assertNotIn("acceptTask", [c.action for c in candidates])
+
+    def test_active_task_is_fought_not_left_to_the_normal_battle_picker(self):
+        api = FakeApi()
+        orchestrator = make(config=Config(enabled=True, dry_run=False), api=api)
+        status = self._status(hasActiveTask=True, task=RAW_TASK)
+        decision = orchestrator.decide_and_act(
+            {"id": "w1"}, None, self._state(), None, None, status)
+        self.assertEqual(decision.action, "startTaskBattle")
+        self.assertEqual(decision.params["monsterId"], "forestspider_lvl1_2")
+        self.assertEqual(api.calls[0], ("startTaskBattle", {}))
+        self.assertIn("4/10", decision.reason)
+
+    def test_active_task_battle_defers_to_rest_at_low_health(self):
+        api = FakeApi()
+        orchestrator = make(config=Config(enabled=True, dry_run=False), api=api)
+        status = self._status(hasActiveTask=True, task=RAW_TASK)
+        low_health = dataclasses.replace(self._state(), health=1)
+        candidates = orchestrator.build_candidates(low_health, task_status=status)
+        self.assertNotIn("startTaskBattle", [c.action for c in candidates])
 
 
 if __name__ == "__main__":

@@ -32,7 +32,9 @@ def record(wallet_id: str, action: str, result: dict) -> dict | None:
 def _extract_summary(action: str, result: dict) -> dict:
     if not isinstance(result, dict):
         return {}
-    if action == "battle":
+    if action in ("battle", "startTaskBattle"):
+        # Both run through Orchestrator.run_battle-shaped results: the actual
+        # reward is nested under "reward", not at the top level.
         nested = result.get("reward")
         if isinstance(nested, dict):
             return nested.get("rewardSummary") or {}

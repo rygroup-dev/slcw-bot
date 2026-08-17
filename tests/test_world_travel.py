@@ -87,7 +87,7 @@ class TravelPlanningTests(unittest.TestCase):
                "balance": 50000, "currentHealth": 130, "currentMana": 130,
                "currentLocationId": location, "attributePoints": 0,
                "attributes": {"vitality": 3, "wisdom": 3},
-               "claimedInitialRewardsV2": list(range(1, 7)), "activity": None,
+               "claimedInitialRewardsV2": list(range(1, 7)), "newbieQuest": 999, "activity": None,
                "freeEnergyRefillsToday": 3,
                "lastFreeEnergyRefillDate": "2099-01-01"}
         doc.update(overrides)
@@ -189,7 +189,7 @@ class StabilityTests(unittest.TestCase):
             "balance": gold, "currentHealth": health, "currentMana": 130,
             "currentLocationId": location, "attributePoints": 0,
             "attributes": {"vitality": 3, "wisdom": 3},
-            "claimedInitialRewardsV2": list(range(1, 16)), "activity": None,
+            "claimedInitialRewardsV2": list(range(1, 16)), "newbieQuest": 999, "activity": None,
             "freeEnergyRefillsToday": 3, "lastFreeEnergyRefillDate": "2099-01-01"})
 
     def test_a_wallet_settles_instead_of_pacing(self):

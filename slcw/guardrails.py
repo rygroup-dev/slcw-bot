@@ -46,8 +46,17 @@ ALLOWED_CALLABLES = frozenset({
     "acceptTask",
     "claimTaskReward",
     "startTaskBattle",
+    # Present in the bundle but confirmed 404 live (2026-08-17): no deployed
+    # Cloud Function answers this name, so it cannot be wired up as-is.
+    # Left allowlisted only in case a future build ships it.
     "generateMiningQuests",
     "completeMiningQuest",
+    # generateCitizenshipQuests/completeCitizenshipQuest are real endpoints,
+    # but confirmed live (2026-08-17) to be unreachable without spending
+    # diamonds — see becomeCitizen below. Left allowlisted for completeness;
+    # they will always fail with FAILED_PRECONDITION ("not a citizen of any
+    # city") under this bot's no-diamonds policy, same as any other denied
+    # premium path.
     "generateCitizenshipQuests",
     "completeCitizenshipQuest",
 
@@ -89,6 +98,14 @@ DENIED_CALLABLES = {
     "speedUp": "spends diamonds to skip a timer",
     "speedUpActivity": "spends diamonds to skip a timer",
     "instantHeal": "spends diamonds",
+    # Confirmed live (2026-08-17): a wallet holding 9,445 gold and 0 diamonds
+    # was rejected with "Insufficient diamonds" on the cheapest of 3 tiers —
+    # so despite the bundle's field being named plain `cost` (399/2199/7799
+    # for citizen/entrepreneur/aristocrat), citizenship is diamond-gated, not
+    # gold-gated. That also keeps generateCitizenshipQuests/
+    # completeCitizenshipQuest unreachable under this bot's no-diamonds
+    # policy — see the comment there.
+    "becomeCitizen": "confirmed live: diamond-gated (\"Insufficient diamonds\"), not gold",
     # Cost doubles per use: 99 * 2^(refills today) diamonds.
     "refillEnergyPaid": "spends diamonds for energy the free call also provides",
     "instantCompleteMiningQuest": "spends diamonds",
@@ -120,7 +137,6 @@ DENIED_CALLABLES = {
 
     # --- gold-costed, with no measured return ----------------------------
     "payCityEntryFee": "costs 50 or 1000 gold with no measured return",
-    "becomeCitizen": "costs gold, return not measured",
     "renounceCitizenship": "discards a paid-for status",
     "expandInventory": "costs currency, return not measured",
     "resetPoints": "costs currency to undo attribute spending",

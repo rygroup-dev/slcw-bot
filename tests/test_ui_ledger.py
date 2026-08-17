@@ -291,6 +291,17 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual(totals.items["spiderfang"], 2)
         self.assertEqual(totals.battles_won, 1)
 
+    def test_records_nested_task_battle_reward(self):
+        # startTaskBattle returns the same run_battle-shaped result as a
+        # normal battle — reward nested under "reward", not top-level.
+        ledger_mod.record("wallet-01", "startTaskBattle", {"reward": {"rewardSummary": {
+            "type": "battle", "winner": "player", "xp": 30, "gold": 0,
+            "items": [{"id": "shadowclaw", "quantity": 1}]}}})
+        totals = ledger_mod.totals()
+        self.assertEqual(totals.xp, 30)
+        self.assertEqual(totals.items["shadowclaw"], 1)
+        self.assertEqual(totals.battles_won, 1)
+
     def test_rewardless_actions_write_nothing(self):
         self.assertIsNone(ledger_mod.record("wallet-01", "startRelax", {"success": True}))
         self.assertFalse(self.path.exists())
