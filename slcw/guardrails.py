@@ -58,6 +58,24 @@ ALLOWED_CALLABLES = frozenset({
     # city") under this bot's no-diamonds policy, same as any other denied
     # premium path.
     "generateCitizenshipQuests",
+
+    # --- clans, read and free participation -----------------------------
+    # Reverse-engineered live 2026-08-21. These four cost no premium currency
+    # and move no funds: two are reads, one applies to join, one withdraws that
+    # application again.
+    "searchClans",
+    "getClanMembers",
+    "applyClan",
+    "cancelApplication",
+    "leaveClan",
+    # Spends raw drops that the market has no bids for at all, in exchange for
+    # DKP and clan XP. The only clan action that costs the fleet nothing it
+    # could otherwise have sold.
+    "submitQuestResources",
+    # Moves gold out of the wallet into a treasury this operator may not
+    # control, so it is allowlisted but gated behind SLCW_CLAN_DONATE_GOLD,
+    # which is off by default. See slcw/clan.py.
+    "makeDonation",
     "completeCitizenshipQuest",
 
     # --- activities funded by energy, gold, or materials ----------------
@@ -87,6 +105,23 @@ ALLOWED_CALLABLES = frozenset({
 # Denied permanently, with the reason recorded. Listed explicitly so a typo in
 # ALLOWED_CALLABLES can never silently re-enable one of these.
 DENIED_CALLABLES = {
+    # --- clan operations this bot must never take -------------------------
+    # Measured live 2026-08-21. Each of these either spends premium currency,
+    # spends a large gold sum, or takes an irreversible decision on behalf of a
+    # whole clan of other people. An unattended fleet has no business doing any
+    # of them, so they are denied by construction rather than left to a flag.
+    "extendClanQuest": "costs 1,399 diamonds or 2,599 $SLCW to add 24h",
+    "createClan": "costs 20,000 gold; creating a clan is an operator decision",
+    "disbandClan": "irreversibly destroys a clan and its treasury",
+    "distributeTreasury": "moves the whole clan treasury to other players",
+    "transferLeadership": "hands the clan to another account, 72h and final",
+    "kickMember": "removes another player from their clan",
+    "setMemberRole": "changes another player's standing in the clan",
+    "updateClanSettings": "rewrites a clan's public identity",
+    "generateClanQuest": (
+        "starts the clan's one free weekly quest for everyone; whether to spend "
+        "that cooldown is a clan decision, not a bot's"),
+
     # --- premium currency ------------------------------------------------
     "spendDiamonds": "spends diamonds",
     "purchaseDiamonds": "buys diamonds with real money",

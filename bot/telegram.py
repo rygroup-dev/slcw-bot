@@ -335,6 +335,10 @@ class TelegramBot:
             "profile": lambda: (ui.render_profile(self.fleet_state(), self.config.build),
                                 ui.main_menu()),
             "crafting": lambda: (self.crafting_text(), ui.main_menu()),
+            "clan": lambda: (ui.render_clan(self.fleet.last_clan,
+                                            self.config.clan_donate_gold,
+                                            self.config.clan_enabled),
+                             ui.main_menu()),
             "control": lambda: (self.control_text(), self.control_markup()),
             "vault": lambda: (self.vault_text(), ui.vault_menu(self.vault.is_unlocked)),
         }.get(view)

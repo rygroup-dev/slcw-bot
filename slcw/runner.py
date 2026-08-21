@@ -20,6 +20,7 @@ from .api import GameApi
 from .auth import AuthError, SessionManager
 from .config import DATA, Config
 from .market import MarketSnapshot
+from . import clan as clan_mod
 from .orchestrator import Orchestrator
 from .transport import ApiError, Transport, TransportError
 from .vault import SLEEP_HOURS_RANGE
@@ -27,6 +28,10 @@ from .vault import SLEEP_HOURS_RANGE
 logger = logging.getLogger(__name__)
 
 FLEET_STATE = DATA / "fleet_state.json"
+
+# Clan quest requirements move over hours, so re-reading them every cycle would
+# spend two Firestore round trips per wallet to learn nothing new.
+CLAN_CACHE_SECONDS = 900
 
 
 @dataclass
@@ -71,6 +76,10 @@ class Fleet:
         self.force_flags: dict = {}
         # Most recent hunt-task status seen, for the Telegram view.
         self.last_task_status = None
+        # Per-wallet clan snapshot for the Telegram view, and the cache that
+        # keeps clan reads off the hot path.
+        self.last_clan: dict = {}
+        self._clan_cache: dict = {}
         self._threads: dict = {}
         self._watchdog_thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -287,10 +296,14 @@ class Fleet:
             if task_status is not None:
                 self.last_task_status = task_status
 
+            clan_context = self._clan_context(api, session, state, wallet["id"])
+            if clan_context.get("membership") is not None:
+                self.last_clan[wallet["id"]] = clan_context
+
             orchestrator = Orchestrator(config=self.config, api=api, rng=rng)
             decision = orchestrator.decide_and_act(
                 wallet, session, state, self.market, holdings, task_status,
-                inventory)
+                inventory, clan_context=clan_context)
 
             status.last_run_ts = int(time.time())
             status.last_action = decision.action
@@ -354,6 +367,44 @@ class Fleet:
             return scheduler.idle_delay(self.config, rng), "error backoff"
         finally:
             transport.close()
+
+    def _clan_context(self, api, session, state, wallet_id: str) -> dict:
+        """Membership and the active clan quest, cached per wallet.
+
+        A wallet in no clan costs nothing here: the player document already says
+        so. A member costs two Firestore reads, which is why the result is held
+        for CLAN_CACHE_SECONDS rather than fetched every cycle — quest
+        requirements move in hours, not seconds.
+        """
+        empty = {"membership": None, "quest": None}
+        if not self.config.clan_enabled:
+            return empty
+
+        clan_id = str((state.raw or {}).get("clanId") or "")
+        if not clan_id:
+            self._clan_cache.pop(wallet_id, None)
+            return empty
+
+        cached = self._clan_cache.get(wallet_id)
+        if cached and time.time() - cached["fetched_at"] < CLAN_CACHE_SECONDS:
+            return cached["context"]
+
+        try:
+            member_doc = api.get_clan_member(session, clan_id, session.local_id)
+            membership = clan_mod.parse_membership(clan_id, member_doc)
+            quest = None
+            for doc in api.get_clan_quests(session, clan_id):
+                parsed = clan_mod.parse_quest(doc, doc.get("questId", ""))
+                if parsed is not None and not parsed.completed:
+                    quest = parsed
+                    break
+            context = {"membership": membership, "quest": quest}
+        except (TransportError, ApiError):
+            # A clan read failing must never stop the wallet playing the game.
+            return empty
+
+        self._clan_cache[wallet_id] = {"fetched_at": time.time(), "context": context}
+        return context
 
     def _register_error(self, status: WalletStatus, message: str) -> None:
         status.consecutive_errors += 1

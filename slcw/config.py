@@ -138,6 +138,17 @@ class Config:
     home_location: str = field(default_factory=lambda: os.environ.get("SLCW_HOME_LOCATION", ""))
     # Let the engine relocate between gathering sites and workshop cities.
     auto_travel: bool = field(default_factory=lambda: _bool("SLCW_AUTO_TRAVEL", True))
+
+    # --- clans ---------------------------------------------------------
+    # Submitting quest resources spends raw drops the market has no bids for,
+    # so it is on by default. Donating gold moves funds into a treasury this
+    # operator may not control, so that half is opt-in and separate.
+    clan_enabled: bool = field(default_factory=lambda: _bool("SLCW_CLAN_ENABLED", True))
+    clan_donate_gold: bool = field(
+        default_factory=lambda: _bool("SLCW_CLAN_DONATE_GOLD", False))
+    # Gold kept back from any donation, on top of the general gold reserve.
+    clan_gold_reserve: int = field(
+        default_factory=lambda: _int("SLCW_CLAN_GOLD_RESERVE", 5000))
     # A destination must beat staying put by this multiple before travelling.
     # Travel time is dead time, so a marginal gain does not justify the trip.
     travel_margin: float = field(default_factory=lambda: _float("SLCW_TRAVEL_MARGIN", 1.35))

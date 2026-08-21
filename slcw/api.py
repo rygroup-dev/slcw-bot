@@ -158,6 +158,56 @@ class GameApi:
     def complete_newbie_quest(self, session) -> dict:
         return self._call(session, "completeNewbieQuest")
 
+    # --- clans -----------------------------------------------------------
+    # Shapes measured live 2026-08-21; see slcw/clan.py for the full contract.
+    def search_clans(self, session, query: str = "") -> dict:
+        return self._call(session, "searchClans", {"query": query})
+
+    def get_clan_members(self, session, clan_id: str) -> dict:
+        return self._call(session, "getClanMembers", {"clanId": clan_id})
+
+    def apply_clan(self, session, clan_id: str) -> dict:
+        return self._call(session, "applyClan", {"clanId": clan_id})
+
+    def cancel_clan_application(self, session, application_id: str) -> dict:
+        return self._call(session, "cancelApplication",
+                          {"applicationId": application_id})
+
+    def leave_clan(self, session) -> dict:
+        return self._call(session, "leaveClan")
+
+    def make_donation(self, session, amount: int, currency: str = "gold") -> dict:
+        """Treasury donation. One per wallet per UTC day, minimum 1,000 gold."""
+        return self._call(session, "makeDonation",
+                          {"amount": int(amount), "currency": currency})
+
+    def submit_quest_resources(self, session, clan_id: str, quest_id: str,
+                               item_id: str, amount: int) -> dict:
+        """All four arguments are required — any subset returns INVALID_ARGUMENT."""
+        return self._call(session, "submitQuestResources", {
+            "clanId": clan_id, "questId": quest_id,
+            "itemId": item_id, "amount": int(amount)})
+
+    def get_clan(self, session, clan_id: str) -> dict:
+        return self._document(f"clans/{clan_id}", session.id_token)
+
+    def get_clan_member(self, session, clan_id: str, uid: str) -> dict:
+        import urllib.parse as _up
+        return self._document(
+            f"clans/{clan_id}/members/{_up.quote(uid, safe='')}", session.id_token)
+
+    def get_clan_quests(self, session, clan_id: str) -> list[dict]:
+        """Quest documents, newest first, with their ids attached."""
+        payload = self.transport.request(
+            "GET", f"{FIRESTORE_BASE}/clans/{clan_id}/quests",
+            headers={"Authorization": f"Bearer {session.id_token}"})
+        out = []
+        for doc in (payload or {}).get("documents") or []:
+            parsed = decode_document(doc)
+            parsed["questId"] = doc["name"].rsplit("/", 1)[-1]
+            out.append(parsed)
+        return out
+
     def onboard(self, session) -> dict:
         """Run idempotent initializers for a brand-new account.
 

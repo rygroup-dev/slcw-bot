@@ -23,6 +23,7 @@ class FakeFleet:
         # The real Fleet always holds a snapshot, empty until the first fetch.
         self.market = market if market is not None else MarketSnapshot()
         self.last_task_status = None
+        self.last_clan = {}
         self.workers = []
         self._threads = {}
 

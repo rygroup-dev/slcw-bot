@@ -21,6 +21,7 @@ MAIN_ROWS = (
     [("⚔️ Combat", "nav:combat"), ("🎯 Task", "nav:tasks")],
     [("🎒 Inventory", "nav:inventory"), ("🧬 Profil", "nav:profile")],
     [("👛 Wallets", "wallet:list"), ("🔨 Crafting", "nav:crafting")],
+    [("🛡 Clan", "nav:clan")],
     [("⚙️ Kontrol", "nav:control"), ("🔐 Vault", "nav:vault")],
 )
 
@@ -1182,3 +1183,54 @@ def render_why(status: dict) -> str:
             f"<pre>{body}</pre>\n"
             f"<i>Skor = gold-ekuivalen bersih per jam, setelah harga bayangan energi "
             f"dan biaya HP.</i>")
+
+
+def render_clan(clan_snapshots: dict, donate_gold: bool, enabled: bool) -> str:
+    """Per-wallet clan standing: role, DKP, today's donation, active quest."""
+    from slcw import clan as clan_mod
+
+    lines = ["<b>🛡 Clan</b>", ""]
+    if not enabled:
+        lines.append("Clan dimatikan (<code>SLCW_CLAN_ENABLED=false</code>).")
+        return "\n".join(lines)
+
+    if not clan_snapshots:
+        lines += [
+            "Belum ada wallet yang masuk clan.",
+            "",
+            "Bot memakai dua aksi clan:",
+            "• <b>Submit quest resources</b> — menyetor drop mentah yang tidak "
+            "punya bid di market sama sekali, ditukar DKP + clan XP. Ini gratis "
+            "buat fleet dan selalu aktif.",
+            "• <b>Donasi gold</b> — 1.000 gold = 1 DKP, sekali sehari (reset "
+            "00:00 UTC). Gold pindah ke treasury yang dipegang leader clan, "
+            f"jadi default <b>{'ON' if donate_gold else 'OFF'}</b>.",
+            "",
+            "Aksi leader (kick, ubah role, bagi treasury, bubarkan, beli/"
+            "perpanjang quest) <b>ditolak permanen</b> di guardrails.",
+        ]
+        return "\n".join(lines)
+
+    for wallet_id, ctx in sorted(clan_snapshots.items()):
+        member = ctx.get("membership")
+        if member is None or not member.is_member:
+            continue
+        quest = ctx.get("quest")
+        flags = []
+        if member.on_probation():
+            flags.append("masa percobaan")
+        if member.donated_today():
+            flags.append("sudah donasi hari ini")
+        suffix = f" — {', '.join(flags)}" if flags else ""
+        lines.append(f"<b>{wallet_id}</b> · {member.role} · "
+                     f"{member.dkp:,} DKP{suffix}")
+        if quest is None:
+            lines.append("   tidak ada quest aktif")
+            continue
+        lines.append(f"   quest: pool {quest.reward_dkp_pool:,} DKP, "
+                     f"+{quest.reward_clan_xp:,} clan XP")
+        for item, missing in list(quest.outstanding().items())[:4]:
+            lines.append(f"     • {item}: kurang {missing:,}")
+    if len(lines) <= 2:
+        lines.append("Belum ada wallet yang masuk clan.")
+    return "\n".join(lines)

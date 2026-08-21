@@ -9,6 +9,7 @@ from . import economy as econ
 from . import build as build_mod
 from . import farming, inventory as inv_mod, leveling, refining, world
 from .combat import CombatMemory, monster_level, select_monster
+from . import clan as clan_mod
 from .quests import NewbieQuestMemory
 from .config import Config
 from .guardrails import GuardrailViolation
@@ -107,13 +108,14 @@ class Orchestrator:
 
     def decide_and_act(self, wallet: dict, session, state, market=None,
                        holdings=None, task_status=None,
-                       inventory=None) -> Decision:
+                       inventory=None, clan_context=None) -> Decision:
         decision = Decision(wallet_id=wallet["id"], dry_run=self.config.dry_run)
 
         try:
             candidates = self.build_candidates(
                 state, market, holdings, task_status=task_status,
-                inventory=inventory, wallet_id=wallet["id"])
+                inventory=inventory, wallet_id=wallet["id"],
+                clan_context=clan_context)
             decision.considered = candidates
             if not candidates:
                 decision.action = "idle"
@@ -152,7 +154,8 @@ class Orchestrator:
     # --- candidate generation -------------------------------------------
     def build_candidates(self, state, market=None, holdings=None,
                          include_travel: bool = True, task_status=None,
-                         inventory=None, wallet_id: str | None = None) -> list:
+                         inventory=None, wallet_id: str | None = None,
+                         clan_context=None) -> list:
         # Free value first: an expired activity is reward already earned, and
         # unclaimed level rewards cost nothing.
         if state.activity is not None and state.activity.is_settleable:
@@ -265,6 +268,10 @@ class Orchestrator:
                     "acceptTask", {},
                     f"next hunt task available "
                     f"({task_status.completed_count} completed)")]
+
+        clan_candidate = self._clan_candidate(state, holdings, clan_context)
+        if clan_candidate is not None:
+            return [clan_candidate]
 
         candidates = []
         stale = market is None or not market.is_fresh(self.config.market_ttl_seconds)
@@ -395,6 +402,41 @@ class Orchestrator:
             return 1
         affordable = int(state.energy) // int(target.energy_cost)
         return max(1, min(affordable, MAX_PROJECTED_REPEATS))
+
+    def _clan_candidate(self, state, holdings, clan_context):
+        """Free clan participation, in the order that costs the fleet least.
+
+        Submitting quest resources spends raw drops the market has no bids for,
+        so it is pure gain and comes first. Donating gold moves funds into a
+        treasury this operator may not control, so it stays behind its own
+        switch and never touches the reserve.
+        """
+        if not self.config.clan_enabled or not clan_context:
+            return None
+        membership = clan_context.get("membership")
+        if membership is None or not membership.is_member:
+            return None
+
+        quest = clan_context.get("quest")
+        if quest is not None:
+            item, amount = clan_mod.submittable(quest, holdings or {})
+            if item and amount > 0:
+                return econ.free_candidate(
+                    "submitQuestResources",
+                    {"clanId": membership.clan_id, "questId": quest.quest_id,
+                     "itemId": item, "amount": amount},
+                    f"{amount}x {item} to clan quest "
+                    f"(pool {quest.reward_dkp_pool:,} DKP)")
+
+        if self.config.clan_donate_gold and membership.can_donate():
+            reserve = max(self.config.gold_reserve, self.config.clan_gold_reserve)
+            amount = clan_mod.affordable_donation(state.gold, reserve)
+            if amount >= clan_mod.MIN_GOLD_DONATION:
+                return econ.free_candidate(
+                    "makeDonation", {"amount": amount, "currency": "gold"},
+                    f"daily clan donation {amount:,}g "
+                    f"(+{clan_mod.donation_dkp(amount)} DKP)")
+        return None
 
     def _travel_candidate(self, state, market, holdings, local_best: float,
                           wallet_id: str | None = None):
@@ -563,6 +605,13 @@ class Orchestrator:
             unequip_result = self.api.unequip_item(session, candidate.params["slot"])
             equip_result = self.api.equip_item(session, candidate.params["instanceId"])
             return {"unequip": unequip_result, "equip": equip_result}
+        if action == "submitQuestResources":
+            p = candidate.params
+            return self.api.submit_quest_resources(
+                session, p["clanId"], p["questId"], p["itemId"], p["amount"])
+        if action == "makeDonation":
+            return self.api.make_donation(
+                session, candidate.params["amount"], candidate.params["currency"])
         if action == "resumeBattle":
             return self.resume_battle(session, candidate.params["battleId"],
                                       candidate.params["monsterId"])
