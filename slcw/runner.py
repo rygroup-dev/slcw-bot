@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import logging
 import os
 import random
 import threading
@@ -23,6 +24,8 @@ from .orchestrator import Orchestrator
 from .transport import ApiError, Transport, TransportError
 from .vault import SLEEP_HOURS_RANGE
 
+logger = logging.getLogger(__name__)
+
 FLEET_STATE = DATA / "fleet_state.json"
 
 
@@ -30,6 +33,7 @@ FLEET_STATE = DATA / "fleet_state.json"
 class WalletStatus:
     wallet_id: str
     nickname: str = ""
+    thread_alive: bool = False
     public_key: str = ""
     paused: bool = False
     pause_reason: str = ""
@@ -68,8 +72,10 @@ class Fleet:
         # Most recent hunt-task status seen, for the Telegram view.
         self.last_task_status = None
         self._threads: dict = {}
+        self._watchdog_thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._lock = threading.Lock()
+        self._persist_lock = threading.Lock()
         self._wake_events: dict = {}
 
     # --- lifecycle -------------------------------------------------------
@@ -77,12 +83,21 @@ class Fleet:
         self._stop.clear()
         for wallet in self.vault.wallets():
             self.ensure_worker(wallet)
+        with self._lock:
+            if self._watchdog_thread is None or not self._watchdog_thread.is_alive():
+                self._watchdog_thread = threading.Thread(
+                    target=self._watchdog,
+                    name="slcw-watchdog",
+                    daemon=True,
+                )
+                self._watchdog_thread.start()
 
     def ensure_worker(self, wallet: dict) -> None:
         wallet_id = wallet["id"]
-        if wallet_id in self._threads and self._threads[wallet_id].is_alive():
-            return
         with self._lock:
+            existing = self._threads.get(wallet_id)
+            if existing is not None and existing.is_alive():
+                return
             self.status.setdefault(wallet_id, WalletStatus(
                 wallet_id=wallet_id,
                 nickname=wallet.get("nickname", ""),
@@ -99,6 +114,37 @@ class Fleet:
         self._stop.set()
         for event in self._wake_events.values():
             event.set()
+
+    def _watchdog(self) -> None:
+        """Keep wallet workers alive without coupling their circuit breakers.
+
+        The watchdog supervises worker threads only. It does not run wallet
+        cycles itself and never clears a wallet's paused/circuit-breaker state.
+        """
+        while not self._stop.wait(10):
+            try:
+                wallets = self.vault.wallets()
+
+                for wallet in wallets:
+                    wallet_id = wallet.get("id")
+                    if not wallet_id:
+                        continue
+
+                    # Disabled wallets should not be restarted.
+                    if not wallet.get("enabled", True):
+                        continue
+
+                    existing = self._threads.get(wallet_id)
+                    if existing is not None and existing.is_alive():
+                        continue
+
+                    # Worker disappeared; restart only this wallet.
+                    self.ensure_worker(wallet)
+
+                self.persist()
+
+            except Exception:
+                logger.exception("fleet watchdog error")
 
     # --- controls --------------------------------------------------------
     def pause(self, wallet_id: str, reason: str = "manual") -> None:
@@ -141,6 +187,28 @@ class Fleet:
 
     # --- worker ----------------------------------------------------------
     def _worker(self, wallet_id: str) -> None:
+        """Contain unexpected errors so one wallet can never die silently."""
+        status = self.status.get(wallet_id)
+        if status:
+            status.thread_alive = True
+
+        try:
+            while not self._stop.is_set():
+                try:
+                    self._worker_loop(wallet_id)
+                    break
+                except Exception as exc:
+                    status = self.status.get(wallet_id)
+                    if status:
+                        self._register_error(status, f"worker crash: {exc}")
+                    logger.exception("wallet worker %s crashed; retrying", wallet_id)
+                    self._stop.wait(5)
+        finally:
+            status = self.status.get(wallet_id)
+            if status:
+                status.thread_alive = False
+
+    def _worker_loop(self, wallet_id: str) -> None:
         rng = random.Random(f"{wallet_id}-{time.time()}")
         event = self._wake_events[wallet_id]
 
@@ -337,19 +405,26 @@ class Fleet:
 
     # --- persistence -----------------------------------------------------
     def persist(self) -> None:
-        payload = {
-            "updated_at": int(time.time()),
-            "dry_run": self.config.dry_run,
-            "enabled": self.config.enabled,
-            "unlocked": self.vault.is_unlocked,
-            "market_age_s": round(self.market.age_seconds, 1) if self.market.taken_at else None,
-            "wallets": {k: v.to_dict() for k, v in self.status.items()},
-        }
-        DATA.mkdir(parents=True, exist_ok=True)
-        tmp = FLEET_STATE.with_suffix(".tmp")
-        tmp.write_text(json.dumps(payload, indent=2, default=str))
-        os.chmod(tmp, 0o600)
-        tmp.replace(FLEET_STATE)
+        """Atomically publish one fleet snapshot at a time.
+
+        Every wallet worker calls this method.  Serialising the complete
+        write/chmod/replace sequence prevents workers from racing over the
+        shared ``fleet_state.tmp`` path and crashing with FileNotFoundError.
+        """
+        with self._persist_lock:
+            payload = {
+                "updated_at": int(time.time()),
+                "dry_run": self.config.dry_run,
+                "enabled": self.config.enabled,
+                "unlocked": self.vault.is_unlocked,
+                "market_age_s": round(self.market.age_seconds, 1) if self.market.taken_at else None,
+                "wallets": {k: v.to_dict() for k, v in self.status.items()},
+            }
+            DATA.mkdir(parents=True, exist_ok=True)
+            tmp = FLEET_STATE.with_suffix(".tmp")
+            tmp.write_text(json.dumps(payload, indent=2, default=str))
+            os.chmod(tmp, 0o600)
+            tmp.replace(FLEET_STATE)
 
     def _sleep(self, event: threading.Event, seconds: float) -> None:
         event.wait(timeout=max(0.5, seconds))
