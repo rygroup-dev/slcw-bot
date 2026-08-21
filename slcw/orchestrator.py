@@ -725,6 +725,8 @@ class Orchestrator:
             return self.api.resolve_clan_application(
                 session, candidate.params["applicationId"],
                 candidate.params["action"])
+        if action == "generateClanQuest":
+            return self.api.generate_clan_quest(session, candidate.params["clanId"])
         if action == "submitQuestResources":
             p = candidate.params
             return self.api.submit_quest_resources(

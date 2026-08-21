@@ -425,3 +425,78 @@ class NewbieQuestRetryTests(unittest.TestCase):
         orchestrator = make(api=FakeApi())
         orchestrator.decide_and_act({"id": "w1"}, None, self._fresh_state())
         self.assertTrue(orchestrator.quests.is_available("w1"))
+
+
+class ExecutorCoverageTests(unittest.TestCase):
+    """Every action the engine can choose must have something that runs it.
+
+    Found live on 2026-08-21: `generateClanQuest` was added as a candidate and
+    the executor was never written, so wallet-01 chose it, raised
+    "orchestrator has no executor", and — because the clan branch is ranked
+    above the hunt chain — chose it again every cycle. The wallet did nothing
+    else at all and was two errors from self-pausing. A candidate with no
+    executor is not a missing feature, it is a wallet that stops playing.
+    """
+
+    import ast as _ast
+    import pathlib as _pathlib
+
+    ROOT = _pathlib.Path(__file__).resolve().parent.parent
+
+    def _literals(self, path, func_names):
+        """Action names passed to the candidate constructors in a module."""
+        tree = self._ast.parse((self.ROOT / path).read_text())
+        found = set()
+        for node in self._ast.walk(tree):
+            if not isinstance(node, self._ast.Call):
+                continue
+            name = getattr(node.func, "attr", None) or getattr(node.func, "id", None)
+            if name not in func_names:
+                continue
+            args = list(node.args)
+            for kw in node.keywords:
+                if kw.arg == "action":
+                    args.insert(0, kw.value)
+            if args and isinstance(args[0], self._ast.Constant) \
+                    and isinstance(args[0].value, str):
+                found.add(args[0].value)
+        return found
+
+    def _executors(self):
+        """Action names the execute() dispatch has a branch for."""
+        tree = self._ast.parse((self.ROOT / "slcw/orchestrator.py").read_text())
+        found = set()
+        for node in self._ast.walk(tree):
+            if not isinstance(node, self._ast.Compare):
+                continue
+            left = node.left
+            if getattr(left, "id", None) != "action":
+                continue
+            for comparator in node.comparators:
+                if isinstance(comparator, self._ast.Constant) \
+                        and isinstance(comparator.value, str):
+                    found.add(comparator.value)
+                elif isinstance(comparator, (self._ast.Tuple, self._ast.List,
+                                             self._ast.Set)):
+                    for element in comparator.elts:
+                        if isinstance(element, self._ast.Constant) \
+                                and isinstance(element.value, str):
+                            found.add(element.value)
+        return found
+
+    def test_every_choosable_action_has_an_executor(self):
+        from slcw import guardrails
+        chosen = (self._literals("slcw/orchestrator.py", {"free_candidate"})
+                  | self._literals("slcw/economy.py",
+                                   {"ActionScore", "free_candidate"}))
+        # Only real server calls need an executor; the rest are bookkeeping.
+        chosen &= guardrails.ALLOWED_CALLABLES
+        missing = sorted(chosen - self._executors())
+        self.assertEqual(missing, [], f"no executor for: {missing}")
+
+    def test_the_scan_actually_finds_the_known_actions(self):
+        """A scan that silently matched nothing would pass the test above."""
+        chosen = self._literals("slcw/orchestrator.py", {"free_candidate"})
+        self.assertIn("createClan", chosen)
+        self.assertIn("generateClanQuest", chosen)
+        self.assertIn("createClan", self._executors())
