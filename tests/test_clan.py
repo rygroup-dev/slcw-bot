@@ -782,3 +782,83 @@ class WeeklyQuestTests(unittest.TestCase):
         cfg = self._Config(enabled=True, dry_run=False, clan_enabled=False)
         self.assertNotIn("generateClanQuest",
                          self._actions(self._ctx(), config=cfg))
+
+
+class ClanReachableUnderTasksTests(unittest.TestCase):
+    """The hunt chain never runs out, so anything ordered after it never runs.
+
+    Found live on 2026-08-21: wallet-01 banked 20,314 gold with auto-found armed
+    and kept picking task battles instead. `createClan` was not merely losing the
+    ranking — it was never built as a candidate, because the task branch returns
+    before the clan branch is reached and a wallet in the Borderlands always has
+    an eligible task. Every other clan action was unreachable the same way.
+    """
+
+    from slcw.config import Config as _Config
+
+    def _task_status(self, status="active", progress=2):
+        from slcw.tasks import Task, TaskStatus
+        return TaskStatus(
+            player_level=13, completed_count=4, all_done=False,
+            has_active_task=True,
+            task=Task(index=5, monster_id="bigfrog_lvl13_2", monster_level=13,
+                      kills_required=8, kills_progress=progress, status=status,
+                      gold_reward=1_300))
+
+    def _state(self, gold):
+        from slcw.model import parse_player
+        return parse_player({
+            "level": 13, "energy": 96, "maxEnergy": 100, "balance": gold,
+            "currentHealth": 200, "maxHealth": 200, "currentMana": 130,
+            "currentLocationId": "farm_3",
+            "attributes": {"wisdom": 3, "vitality": 3},
+            "claimedInitialRewardsV2": list(range(1, 20)),
+            "newbieQuest": 999, "activity": None,
+            "freeEnergyRefillsToday": 3, "lastFreeEnergyRefillDate": "2099-01-01",
+        })
+
+    def _actions(self, clan_ctx, gold=20_314, task_status=None, config=None):
+        from tests.test_orchestrator import make, FakeApi
+        orch = make(config=config or self._Config(
+            enabled=True, dry_run=False, clan_auto_found=True,
+            clan_founder_wallet="wallet-01", clan_name="RY Group",
+            clan_tag="RYG"), api=FakeApi())
+        return [c.action for c in orch.build_candidates(
+            self._state(gold), holdings={}, include_travel=False,
+            wallet_id="wallet-01", clan_context=clan_ctx,
+            task_status=task_status if task_status is not None
+            else self._task_status())]
+
+    def setUp(self):
+        import tempfile, pathlib
+        self._dir = tempfile.TemporaryDirectory()
+        self.registry = clan.ClanRegistry(
+            path=pathlib.Path(self._dir.name) / "clan.json")
+
+    def tearDown(self):
+        self._dir.cleanup()
+
+    def _ctx(self, **over):
+        ctx = {"membership": None, "quest": None, "registry": self.registry,
+               "fleet_uids": set(), "applications": [], "clan_info": None,
+               "seat_holders": None, "levels_by_uid": {}}
+        ctx.update(over)
+        return ctx
+
+    def test_founding_beats_the_endless_task_chain(self):
+        self.assertEqual(self._actions(self._ctx())[0], "createClan")
+
+    def test_a_finished_task_is_still_claimed_first(self):
+        """Claiming is free gold and instant; it makes founding likelier, not later."""
+        actions = self._actions(self._ctx(),
+                                task_status=self._task_status(status="completed"))
+        self.assertEqual(actions[0], "claimTaskReward")
+
+    def test_joining_beats_the_task_chain_too(self):
+        self.registry.record_clan("c1", "wallet-99")
+        ctx = self._ctx(clan_info=clan.parse_clan("c1", {
+            "level": 1, "maxMembers": 10, "memberCount": 1}))
+        self.assertEqual(self._actions(ctx)[0], "applyClan")
+
+    def test_the_task_chain_still_runs_when_no_clan_action_is_due(self):
+        self.assertEqual(self._actions(self._ctx(), gold=500)[0], "startTaskBattle")

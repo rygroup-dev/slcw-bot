@@ -243,12 +243,32 @@ class Orchestrator:
                     f"{equip.template_id} upgrades {equip.slot} "
                     f"(tier {equip.replaces_tier} → held)")]
 
-        # A finished hunt task is gold sitting there; accepting the next one is free.
+        # A finished hunt task is gold sitting there. This one stays ahead of the
+        # clan branch: it is instant, it is free, and the gold it pays is what
+        # funds founding a clan in the first place.
+        if (task_status is not None and task_status.eligible
+                and task_status.can_claim):
+            return [econ.free_candidate(
+                "claimTaskReward", {},
+                f"task reward of {task_status.task.gold_reward:,} gold ready")]
+
+        # Clan actions come before the rest of the hunt chain, and the ordering is
+        # the whole point. The chain never runs out — finish a task and the next
+        # one is waiting — so a wallet in the Borderlands always has a task battle
+        # to return, and anything ordered after it is unreachable. Found live on
+        # 2026-08-21: wallet-01 sat on 20,314 gold with auto-found armed and kept
+        # picking task battles, because `createClan` was never built as a
+        # candidate at all. Every clan action shared the same fate.
+        #
+        # Nothing here competes with the chain for long. Founding happens once
+        # ever, applying once per wallet, admitting once per applicant, the quest
+        # once a week, and a resource submission empties the stack it submits.
+        clan_candidate = self._clan_candidate(
+            state, holdings, clan_context, wallet_id)
+        if clan_candidate is not None:
+            return [clan_candidate]
+
         if task_status is not None and task_status.eligible:
-            if task_status.can_claim:
-                return [econ.free_candidate(
-                    "claimTaskReward", {},
-                    f"task reward of {task_status.task.gold_reward:,} gold ready")]
             # Accepting and fighting are location-gated server-side ("You must be
             # in the Borderlands"), and that refusal classifies as benign — so
             # offering either from a city silently burns the cycle and clears the
@@ -268,11 +288,6 @@ class Orchestrator:
                     "acceptTask", {},
                     f"next hunt task available "
                     f"({task_status.completed_count} completed)")]
-
-        clan_candidate = self._clan_candidate(
-            state, holdings, clan_context, wallet_id)
-        if clan_candidate is not None:
-            return [clan_candidate]
 
         candidates = []
         stale = market is None or not market.is_fresh(self.config.market_ttl_seconds)
