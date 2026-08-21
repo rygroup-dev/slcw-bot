@@ -50,3 +50,5 @@ htmlcov/
 # record; everything else is kept in /root/slcw-bot-archive.
 docs/
 NOTES.md
+# Handoff prompt for the next session: operator context, not documentation.
+NEXT_SESSION.md
