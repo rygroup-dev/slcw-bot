@@ -12,6 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "data"
+ENV_PATH = ROOT / ".env"
 
 PROJECT = "slcw-15253244-abbca"
 REGION = "us-central1"
@@ -20,6 +21,59 @@ FIRESTORE_BASE = f"https://firestore.googleapis.com/v1/projects/{PROJECT}/databa
 SECURETOKEN_URL = "https://securetoken.googleapis.com/v1/token"
 IDENTITY_URL = "https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken"
 APP_ORIGIN = "https://app.slcw.xyz"
+
+
+def parse_env_text(text: str) -> dict:
+    """Read KEY=value pairs, ignoring comments and blank lines."""
+    values = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        values[key.strip()] = value.strip()
+    return values
+
+
+def persist_overrides(updates: dict, path: Path | None = None) -> None:
+    """Write `updates` into .env, in place, and into the live environment.
+
+    The Telegram economy switches used to be a dataclasses.replace on the
+    in-memory Config and nothing else, so gold-mode, its duration, auto-travel
+    and dry-run all reverted to whatever .env said the next time the service
+    restarted — the operator's last instruction was silently discarded.
+
+    Rewriting the file wholesale would drop comments and any key this version
+    does not know about, so each key is edited on its own line and anything
+    unrecognised is left exactly as it was found.
+    """
+    path = path or ENV_PATH
+    lines = path.read_text().splitlines() if path.exists() else []
+    remaining = dict(updates)
+
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key = stripped.partition("=")[0].strip()
+        if key in remaining:
+            lines[index] = f"{key}={remaining.pop(key)}"
+
+    if remaining:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.extend(f"{key}={value}" for key, value in remaining.items())
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text("\n".join(lines) + "\n")
+    os.chmod(tmp, 0o600)
+    tmp.replace(path)
+
+    # systemd re-reads .env on restart, but this process must not keep serving
+    # the value the operator just changed.
+    for key, value in updates.items():
+        os.environ[key] = str(value)
 
 
 def _int(name: str, default: int) -> int:

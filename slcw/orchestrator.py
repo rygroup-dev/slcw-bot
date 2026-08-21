@@ -246,14 +246,21 @@ class Orchestrator:
                 return [econ.free_candidate(
                     "claimTaskReward", {},
                     f"task reward of {task_status.task.gold_reward:,} gold ready")]
-            if (task_status.can_fight and state.energy >= econ.BATTLE_ENERGY
+            # Accepting and fighting are location-gated server-side ("You must be
+            # in the Borderlands"), and that refusal classifies as benign — so
+            # offering either from a city silently burns the cycle and clears the
+            # error counter. Claiming is left ungated: no rejection was observed
+            # for it, and a finished task's gold should not wait on travel.
+            in_borderlands = state.location_id in BATTLE_LOCATIONS
+            if (in_borderlands and task_status.can_fight
+                    and state.energy >= econ.BATTLE_ENERGY
                     and state.health_ratio >= BATTLE_MIN_HEALTH_RATIO):
                 task = task_status.task
                 return [econ.free_candidate(
                     "startTaskBattle", {"monsterId": task.monster_id},
                     f"task battle {task.kills_progress}/{task.kills_required} "
                     f"vs {task.monster_id} for {task.gold_reward:,}g")]
-            if task_status.can_accept:
+            if in_borderlands and task_status.can_accept:
                 return [econ.free_candidate(
                     "acceptTask", {},
                     f"next hunt task available "

@@ -70,11 +70,13 @@ class EligibilityTests(unittest.TestCase):
 
 
 class OrchestratorTests(unittest.TestCase):
-    def _state(self, level=12):
+    def _state(self, level=12, location="farm_3"):
+        # farm_3 is the Borderlands. Accepting and fighting hunt tasks are
+        # refused anywhere else, so that is where these tests belong.
         return parse_player({
             "level": level, "grade": 1, "energy": 80, "maxEnergy": 100,
             "balance": 5000, "currentHealth": 130, "currentMana": 130,
-            "currentLocationId": "city_2", "attributePoints": 0,
+            "currentLocationId": location, "attributePoints": 0,
             "attributes": {"vitality": 3, "wisdom": 3},
             "claimedInitialRewardsV2": list(range(1, 13)), "newbieQuest": 999, "activity": None,
             "freeEnergyRefillsToday": 3, "lastFreeEnergyRefillDate": "2099-01-01"})
@@ -144,3 +146,60 @@ class OrchestratorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TaskLocationGateTests(unittest.TestCase):
+    """accept and fight are refused outside the Borderlands.
+
+    Measured live 2026-08-21 from a wallet in city_1: acceptTask returns
+    FAILED_PRECONDITION "You must be in the Borderlands to accept tasks" and
+    startTaskBattle "You must be in the Borderlands to fight". Both classify as
+    benign, so offering them from a city burned the cycle and reset the error
+    counter — the same trap the newbie quest chain fell into.
+    """
+
+    def _status(self):
+        return tasks.parse_status({
+            "playerLevel": 12,
+            "hasActiveTask": True,
+            "task": {"monsterId": "werewolf_lvl10_2", "monsterLevel": 10,
+                     "killsProgress": 2, "killsRequired": 7, "goldReward": 1000,
+                     "status": "active"},
+        })
+
+    def _state(self, location):
+        return parse_player({
+            "level": 12, "energy": 80, "maxEnergy": 100,
+            "currentHealth": 130, "currentMana": 130,
+            "currentLocationId": location,
+            "attributes": {"wisdom": 3, "vitality": 3},
+            "claimedInitialRewardsV2": list(range(1, 13)),
+            # Past the chain, so the free newbie quest does not outrank the
+            # task branch this test is about.
+            "newbieQuest": 999,
+            "activity": None,
+        })
+
+    def _actions(self, location):
+        orch = make(api=FakeApi())
+        return [c.action for c in orch.build_candidates(
+            self._state(location), task_status=self._status(),
+            include_travel=False, wallet_id="w1")]
+
+    def test_task_battle_is_offered_in_the_borderlands(self):
+        self.assertIn("startTaskBattle", self._actions("farm_3"))
+
+    def test_task_battle_is_not_offered_from_a_city(self):
+        self.assertNotIn("startTaskBattle", self._actions("city_2"))
+
+    def test_accepting_is_not_offered_from_a_city(self):
+        status = tasks.parse_status({"playerLevel": 12, "hasActiveTask": False,
+                                     "task": None})
+        orch = make(api=FakeApi())
+        actions = [c.action for c in orch.build_candidates(
+            self._state("city_2"), task_status=status, include_travel=False,
+            wallet_id="w1")]
+        self.assertNotIn("acceptTask", actions)
+
+    def test_a_city_wallet_still_has_something_else_to_do(self):
+        self.assertNotEqual(self._actions("city_2"), [])

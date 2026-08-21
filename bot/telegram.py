@@ -21,7 +21,7 @@ import sys
 import threading
 import time
 
-from slcw import keys, ledger
+from slcw import config as config_mod, keys, ledger
 from slcw.vault import VaultError
 
 from . import ui
@@ -435,12 +435,16 @@ class TelegramBot:
             self.config = dataclasses.replace(
                 self.config, farming_gold=not self.config.farming_gold)
             self.fleet.config = self.config
+            config_mod.persist_overrides(
+                {"SLCW_FARMING_GOLD": str(self.config.farming_gold).lower()})
             return self.edit(chat_id, message_id, ui.ECONOMY_INTRO,
                              self.economy_markup())
         elif action == "toggle_travel":
             self.config = dataclasses.replace(
                 self.config, auto_travel=not self.config.auto_travel)
             self.fleet.config = self.config
+            config_mod.persist_overrides(
+                {"SLCW_AUTO_TRAVEL": str(self.config.auto_travel).lower()})
             return self.edit(chat_id, message_id, ui.ECONOMY_INTRO,
                              self.economy_markup())
         elif action == "goldhours":
@@ -451,12 +455,16 @@ class TelegramBot:
             self.config = dataclasses.replace(
                 self.config, farming_gold_hours=max(1, min(8, hours)))
             self.fleet.config = self.config
+            config_mod.persist_overrides(
+                {"SLCW_FARMING_GOLD_HOURS": str(self.config.farming_gold_hours)})
             return self.edit(chat_id, message_id, ui.GOLD_HOURS_HELP,
                              ui.gold_hours_menu(self.config.farming_gold_hours))
         elif action == "toggle_dry":
             self.config = dataclasses.replace(self.config,
                                               dry_run=not self.config.dry_run)
             self.fleet.config = self.config
+            config_mod.persist_overrides(
+                {"SLCW_DRY_RUN": str(self.config.dry_run).lower()})
 
         self.edit(chat_id, message_id, self.control_text(), self.control_markup())
 

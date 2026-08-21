@@ -346,8 +346,17 @@ Anything that returns real value at zero risk is taken before anything scored:
   cost. The engine accepts the next task, fights the specific monster it assigns
   with `startTaskBattle`, and claims the reward the moment it completes.
 - **Newbie quest chain** — a tutorial line that pays escalating XP for a bare,
-  argument-free call. There is no status endpoint to say when it ends, so retries
-  are capped rather than left to hammer a dead chain forever.
+  argument-free call. There is no status endpoint to say when it ends *and no field
+  for it on the player document either*, so progress is remembered locally in
+  `data/newbie_quests.json`. The chain is item-gated: it rejects with
+  `FAILED_PRECONDITION "Insufficient items: 0/1"` when the wallet cannot pay the
+  step, which is a "not yet" rather than a "never", so a refusal parks that wallet's
+  chain for six hours instead of abandoning it. The refusal is recorded even though
+  it classifies as benign — see the note on benign rejections below.
+- **Battles left open** — a battle activity carries no `endTime`, so a process that
+  died mid-fight left the wallet holding one indefinitely. Any battle found open at
+  startup is resumed through the normal turn loop and then settled; blind-settling
+  it is refused by the server with HTTP 500 while the fight is unresolved.
 - **Equipment upgrades** — a strictly better item in an already-full slot used to
   sit there unused, because equipping into an occupied slot needs the worn piece
   removed first. The engine now does both calls — unequip, then equip — as one
@@ -359,6 +368,21 @@ the name, whatever the frontend bundle implies), and **citizenship** — the gat
 front of citizenship quests — was confirmed to cost diamonds, not gold, on a real
 account with plenty of gold and zero diamonds. Both stay out of the decision loop
 for exactly that reason, recorded in `guardrails.py`.
+
+#### A benign rejection is not always a no-op
+
+`ALREADY_EXISTS` and `FAILED_PRECONDITION` mean "the server already did this", so
+they deliberately do not count toward the circuit breaker. That is right for an
+idempotent initializer and wrong for an action that will keep being chosen. On
+2026-08-21 the newbie quest chain was rejecting every wallet with
+`FAILED_PRECONDITION "Insufficient items: 0/1"`; because that reads as benign it
+*cleared* the error counter, so 25 wallets reported zero errors while none of them
+had done anything productive for four days.
+
+The rule this repo now follows: an action that can be re-picked must record its own
+refusal somewhere, benign or not, and consult that record before being offered
+again. Health is measured by what the ledger records, not by what the error counter
+does not.
 
 **Hunting** is a third: a passive, turn-free alternative to battle, measured live
 at 11 xp + 1× spiderfang for 3 gold and 3 energy against a tier-1 monster,

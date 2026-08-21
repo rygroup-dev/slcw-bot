@@ -127,7 +127,12 @@ def render_env(values: dict) -> str:
               f"SLCW_REST_MP_RATIO={values.get('SLCW_REST_MP_RATIO', '0.25')}",
               f"SLCW_BATTLE_MAX_TURNS={values.get('SLCW_BATTLE_MAX_TURNS', '12')}",
               f"SLCW_MARKET_TTL_SECONDS={values.get('SLCW_MARKET_TTL_SECONDS', '1800')}",
+              # Both of these are live switches in the Telegram economy menu,
+              # which writes them back here — so a generated .env has to carry
+              # them, or the first toggle appends keys the file never declared.
+              f"SLCW_FARMING_GOLD={values.get('SLCW_FARMING_GOLD', 'true')}",
               f"SLCW_FARMING_GOLD_HOURS={values.get('SLCW_FARMING_GOLD_HOURS', '8')}",
+              f"SLCW_AUTO_TRAVEL={values.get('SLCW_AUTO_TRAVEL', 'true')}",
               f"SLCW_GOLD_RESERVE={values.get('SLCW_GOLD_RESERVE', '500')}",
               f"SLCW_RICH_DROP_GOLD={values.get('SLCW_RICH_DROP_GOLD', '2000')}",
               ""]
