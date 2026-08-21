@@ -154,6 +154,18 @@ class Config:
     # farms and refines its way past the target forever without reaching it.
     clan_founder_wallet: str = field(
         default_factory=lambda: os.environ.get("SLCW_CLAN_FOUNDER_WALLET", ""))
+    # Found the clan automatically once the nominated wallet can afford it.
+    # Exactly once: the id is written to data/clan.json and the branch refuses
+    # to run while any id is recorded there.
+    clan_auto_found: bool = field(
+        default_factory=lambda: _bool("SLCW_CLAN_AUTO_FOUND", False))
+    clan_name: str = field(default_factory=lambda: os.environ.get("SLCW_CLAN_NAME", ""))
+    clan_tag: str = field(default_factory=lambda: os.environ.get("SLCW_CLAN_TAG", ""))
+    # Every other wallet applies to that clan, and the leader admits applications
+    # from this fleet's own wallets only. New wallets added later are picked up
+    # by the same branch with no extra step.
+    clan_auto_join: bool = field(
+        default_factory=lambda: _bool("SLCW_CLAN_AUTO_JOIN", True))
     # A destination must beat staying put by this multiple before travelling.
     # Travel time is dead time, so a marginal gain does not justify the trip.
     travel_margin: float = field(default_factory=lambda: _float("SLCW_TRAVEL_MARGIN", 1.35))

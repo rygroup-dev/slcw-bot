@@ -429,9 +429,60 @@ class Orchestrator:
         """
         if not self.config.clan_enabled or not clan_context:
             return None
+
+        registry = clan_context.get("registry")
         membership = clan_context.get("membership")
-        if membership is None or not membership.is_member:
+        # The player document is the authority on whether this wallet is in a
+        # clan. Deriving it from the membership read alone would let a failed
+        # Firestore call look like "no clan" and found a second one.
+        in_clan = (bool((state.raw or {}).get("clanId"))
+                   or (membership is not None and membership.is_member))
+
+        # Found the clan, once, from the nominated wallet only. Three separate
+        # guards have to agree: the operator nominated this wallet, the registry
+        # holds no clan id (that is the one that survives a restart), and the
+        # server says this wallet is in no clan.
+        founder = (self.config.clan_founder_wallet or "").strip()
+        if (self.config.clan_auto_found and registry is not None
+                and founder and wallet_id == founder
+                and not registry.founded and not in_clan
+                and self.config.clan_name and self.config.clan_tag
+                and state.gold >= clan_mod.CREATE_CLAN_GOLD):
+            return econ.free_candidate(
+                "createClan",
+                {"name": self.config.clan_name, "tag": self.config.clan_tag},
+                f"founding {self.config.clan_name!r} for "
+                f"{clan_mod.CREATE_CLAN_GOLD:,} gold")
+
+        # Any wallet outside the clan applies to it, including one added to the
+        # vault long after the clan was founded — nothing here is per-wallet
+        # configuration, so a new wallet needs no extra step.
+        if (self.config.clan_auto_join and registry is not None
+                and registry.founded and not in_clan
+                and not registry.has_pending_application(wallet_id or "")):
+            return econ.free_candidate(
+                "applyClan", {"clanId": registry.clan_id},
+                f"joining clan {registry.clan_id}")
+
+        # Everything below reads this wallet's standing inside the clan. The
+        # player document can say "in a clan" while the membership read is still
+        # missing or has failed, and that is not enough to act on.
+        if not in_clan or membership is None or not membership.is_member:
             return None
+
+        # The leader admits this fleet's own wallets and nobody else. A new clan
+        # has ten seats; every stranger admitted costs one of them.
+        if membership.role in ("leader", "officer"):
+            ours = clan_mod.acceptable_applications(
+                clan_context.get("applications") or [],
+                membership.clan_id, clan_context.get("fleet_uids") or set())
+            if ours:
+                app = ours[0]
+                return econ.free_candidate(
+                    "resolveApplication",
+                    {"applicationId": app.get("applicationId", ""),
+                     "action": "accept"},
+                    f"admitting {app.get('displayName') or app.get('userId', '?')}")
 
         quest = clan_context.get("quest")
         if quest is not None:
@@ -623,6 +674,15 @@ class Orchestrator:
             unequip_result = self.api.unequip_item(session, candidate.params["slot"])
             equip_result = self.api.equip_item(session, candidate.params["instanceId"])
             return {"unequip": unequip_result, "equip": equip_result}
+        if action == "createClan":
+            return self.api.create_clan(
+                session, candidate.params["name"], candidate.params["tag"])
+        if action == "applyClan":
+            return self.api.apply_clan(session, candidate.params["clanId"])
+        if action == "resolveApplication":
+            return self.api.resolve_clan_application(
+                session, candidate.params["applicationId"],
+                candidate.params["action"])
         if action == "submitQuestResources":
             p = candidate.params
             return self.api.submit_quest_resources(

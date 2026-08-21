@@ -35,7 +35,13 @@ the one clan action that costs the fleet nothing it could have sold.
 from __future__ import annotations
 
 import datetime as _dt
+import json
+import os
+import time
 from dataclasses import dataclass, field
+from pathlib import Path
+
+from .config import DATA
 
 # Measured from the client's own copy: "Rate: 1,000 Gold = 1 DKP" and
 # "1 $SLCW = 50 DKP", with "Minimum donation: 1,000 Gold or 1 $SLCW".
@@ -182,3 +188,108 @@ def _ms(value) -> int:
     """Timestamps arrive as epoch millis or as an ISO string, depending on path."""
     from .model import normalize_timestamp
     return normalize_timestamp(value) or 0
+
+
+REGISTRY_PATH = DATA / "clan.json"
+
+# How long a sent application is assumed to still be pending before the wallet
+# is allowed to apply again. Applications sit until a leader resolves them, and
+# re-sending every cycle would spam the clan's queue.
+APPLICATION_TTL_S = 6 * 60 * 60
+
+
+def fleet_uid(public_key: str) -> str:
+    """The player id the game derives from a Solana wallet.
+
+    Read live: session.local_id is "solana:" + the wallet's public key, and the
+    same string appears as `userId` on a clan application. This is what lets the
+    leader tell its own fleet's applications apart from a stranger's.
+    """
+    return f"solana:{public_key}"
+
+
+class ClanRegistry:
+    """Remembers the clan this fleet founded, and which wallets have applied.
+
+    The clan is founded exactly once. "Exactly once" cannot rest on the decision
+    loop alone — a wallet re-reads its own state every cycle and a restart clears
+    memory — so the clan id is written here the moment the founder is seen to
+    have one, and the create branch refuses to run while any id is recorded.
+    """
+
+    def __init__(self, path: Path = REGISTRY_PATH):
+        self.path = path
+        self.data: dict = {"clan_id": "", "founder_wallet": "",
+                           "created_at": 0, "applications": {}}
+        self.load()
+
+    def load(self) -> None:
+        if not self.path.exists():
+            return
+        try:
+            payload = json.loads(self.path.read_text())
+        except json.JSONDecodeError:
+            return
+        if isinstance(payload, dict):
+            self.data.update(payload)
+            self.data.setdefault("applications", {})
+
+    def save(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self.data, indent=2))
+        os.chmod(tmp, 0o600)
+        tmp.replace(self.path)
+
+    @property
+    def clan_id(self) -> str:
+        return str(self.data.get("clan_id") or "")
+
+    @property
+    def founded(self) -> bool:
+        return bool(self.clan_id)
+
+    def record_clan(self, clan_id: str, wallet_id: str = "") -> None:
+        """Adopt a clan id. The first one recorded wins and is never replaced."""
+        if not clan_id or self.clan_id:
+            return
+        self.data["clan_id"] = clan_id
+        self.data["founder_wallet"] = wallet_id or self.data.get("founder_wallet", "")
+        self.data["created_at"] = int(time.time())
+        self.save()
+
+    def record_application(self, wallet_id: str, application_id: str) -> None:
+        self.data.setdefault("applications", {})[wallet_id] = {
+            "application_id": application_id, "ts": int(time.time())}
+        self.save()
+
+    def clear_application(self, wallet_id: str) -> None:
+        if self.data.get("applications", {}).pop(wallet_id, None) is not None:
+            self.save()
+
+    def has_pending_application(self, wallet_id: str, now: float | None = None) -> bool:
+        entry = (self.data.get("applications") or {}).get(wallet_id)
+        if not entry:
+            return False
+        return (now or time.time()) - entry.get("ts", 0) < APPLICATION_TTL_S
+
+
+def acceptable_applications(applications: list, clan_id: str,
+                            fleet_uids: set) -> list:
+    """Pending applications to our clan from our own wallets, and nobody else's.
+
+    A leader that auto-accepted anything in its queue would admit strangers into
+    a clan built to hold one operator's fleet, and every stranger admitted takes
+    one of the ten seats a new clan has.
+    """
+    out = []
+    for app in applications or []:
+        if str(app.get("clanId") or "") != clan_id:
+            continue
+        status = str(app.get("status") or "pending")
+        if status != "pending" or app.get("resolvedAt"):
+            continue
+        if str(app.get("userId") or "") not in fleet_uids:
+            continue
+        out.append(app)
+    return out

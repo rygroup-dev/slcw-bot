@@ -315,3 +315,218 @@ class FounderReserveTests(unittest.TestCase):
     def test_nothing_changes_when_no_founder_is_nominated(self):
         self.assertEqual(self._reserve("wallet-01", 12_214, founder=""),
                          12_214 - 500)
+
+
+class RegistryTests(unittest.TestCase):
+    """The clan is founded exactly once, and that has to survive a restart."""
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.path = Path(self.dir.name) / "clan.json"
+
+    def reg(self):
+        return clan.ClanRegistry(path=self.path)
+
+    def test_a_fresh_registry_has_no_clan(self):
+        self.assertFalse(self.reg().founded)
+
+    def test_a_recorded_clan_survives_a_restart(self):
+        self.reg().record_clan("c1", "wallet-01")
+        self.assertEqual(self.reg().clan_id, "c1")
+        self.assertTrue(self.reg().founded)
+
+    def test_the_first_clan_recorded_is_never_replaced(self):
+        r = self.reg()
+        r.record_clan("c1", "wallet-01")
+        r.record_clan("c2", "wallet-02")
+        self.assertEqual(r.clan_id, "c1")
+
+    def test_an_empty_clan_id_is_ignored(self):
+        r = self.reg()
+        r.record_clan("", "wallet-01")
+        self.assertFalse(r.founded)
+
+    def test_a_sent_application_is_remembered(self):
+        r = self.reg()
+        r.record_application("wallet-02", "app1")
+        self.assertTrue(r.has_pending_application("wallet-02"))
+        self.assertFalse(r.has_pending_application("wallet-03"))
+
+    def test_an_application_goes_stale_so_a_wallet_can_retry(self):
+        import time as _t
+        r = self.reg()
+        r.record_application("wallet-02", "app1")
+        later = _t.time() + clan.APPLICATION_TTL_S + 1
+        self.assertFalse(r.has_pending_application("wallet-02", now=later))
+
+    def test_a_corrupt_registry_is_ignored_rather_than_fatal(self):
+        self.path.write_text("{not json")
+        self.assertFalse(self.reg().founded)
+
+
+class AcceptableApplicationTests(unittest.TestCase):
+    """A leader admits its own fleet and nobody else."""
+
+    OURS = {"solana:AAA", "solana:BBB"}
+
+    def _app(self, **over):
+        app = {"clanId": "c1", "userId": "solana:AAA", "status": "pending",
+               "resolvedAt": None}
+        app.update(over)
+        return app
+
+    def test_our_own_pending_application_is_accepted(self):
+        got = clan.acceptable_applications([self._app()], "c1", self.OURS)
+        self.assertEqual(len(got), 1)
+
+    def test_a_strangers_application_is_never_accepted(self):
+        got = clan.acceptable_applications(
+            [self._app(userId="solana:ZZZ")], "c1", self.OURS)
+        self.assertEqual(got, [])
+
+    def test_an_application_to_another_clan_is_ignored(self):
+        got = clan.acceptable_applications([self._app(clanId="other")], "c1", self.OURS)
+        self.assertEqual(got, [])
+
+    def test_an_already_resolved_application_is_ignored(self):
+        got = clan.acceptable_applications(
+            [self._app(resolvedAt="2026-08-20T00:00:00Z")], "c1", self.OURS)
+        self.assertEqual(got, [])
+
+    def test_a_rejected_application_is_ignored(self):
+        got = clan.acceptable_applications(
+            [self._app(status="rejected")], "c1", self.OURS)
+        self.assertEqual(got, [])
+
+
+class AutoFoundJoinTests(unittest.TestCase):
+    """Found once from the primary wallet; every other wallet joins by itself."""
+
+    from slcw.config import Config as _Config
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.registry = clan.ClanRegistry(path=Path(self.dir.name) / "clan.json")
+
+    def _cfg(self, **over):
+        base = dict(enabled=True, dry_run=False, clan_founder_wallet="wallet-01",
+                    clan_auto_found=True, clan_name="Ry HooD", clan_tag="RYH",
+                    clan_auto_join=True)
+        base.update(over)
+        return self._Config(**base)
+
+    def _state(self, gold=25_000, clan_id=""):
+        from slcw.model import parse_player
+        doc = {"level": 12, "energy": 80, "maxEnergy": 100, "balance": gold,
+               "currentHealth": 130, "currentMana": 130,
+               "currentLocationId": "farm_3", "attributes": {"wisdom": 3, "vitality": 3},
+               "claimedInitialRewardsV2": list(range(1, 13)),
+               "newbieQuest": 999, "activity": None,
+               "freeEnergyRefillsToday": 3, "lastFreeEnergyRefillDate": "2099-01-01"}
+        if clan_id:
+            doc["clanId"] = clan_id
+        return parse_player(doc)
+
+    def _actions(self, wallet_id, state=None, cfg=None, ctx=None):
+        from tests.test_orchestrator import make, FakeApi
+        context = {"membership": None, "quest": None,
+                   "registry": self.registry, "fleet_uids": set(),
+                   "applications": []}
+        context.update(ctx or {})
+        orch = make(config=cfg or self._cfg(), api=FakeApi())
+        return [c.action for c in orch.build_candidates(
+            state if state is not None else self._state(), include_travel=False,
+            wallet_id=wallet_id, clan_context=context)]
+
+    # --- founding ---
+    def test_the_primary_wallet_founds_the_clan_when_it_can_afford_it(self):
+        self.assertIn("createClan", self._actions("wallet-01"))
+
+    def test_it_does_not_found_while_still_short_of_the_cost(self):
+        self.assertNotIn("createClan",
+                         self._actions("wallet-01", self._state(gold=19_999)))
+
+    def test_no_other_wallet_ever_founds_a_clan(self):
+        self.assertNotIn("createClan", self._actions("wallet-07"))
+
+    def test_it_never_founds_a_second_clan(self):
+        """The registry is the guard that survives a restart."""
+        self.registry.record_clan("c1", "wallet-01")
+        self.assertNotIn("createClan", self._actions("wallet-01"))
+
+    def test_it_does_not_found_when_the_wallet_is_already_in_a_clan(self):
+        self.assertNotIn("createClan",
+                         self._actions("wallet-01", self._state(clan_id="c9")))
+
+    def test_founding_needs_a_name_and_tag(self):
+        cfg = self._cfg(clan_name="", clan_tag="")
+        self.assertNotIn("createClan", self._actions("wallet-01", cfg=cfg))
+
+    def test_founding_can_be_switched_off(self):
+        self.assertNotIn("createClan",
+                         self._actions("wallet-01", cfg=self._cfg(clan_auto_found=False)))
+
+    # --- joining ---
+    def test_other_wallets_apply_once_the_clan_exists(self):
+        self.registry.record_clan("c1", "wallet-01")
+        self.assertIn("applyClan", self._actions("wallet-07"))
+
+    def test_a_wallet_does_not_apply_before_the_clan_exists(self):
+        self.assertNotIn("applyClan", self._actions("wallet-07"))
+
+    def test_a_wallet_does_not_reapply_while_its_request_is_pending(self):
+        self.registry.record_clan("c1", "wallet-01")
+        self.registry.record_application("wallet-07", "app1")
+        self.assertNotIn("applyClan", self._actions("wallet-07"))
+
+    def test_a_wallet_already_in_the_clan_does_not_apply(self):
+        self.registry.record_clan("c1", "wallet-01")
+        self.assertNotIn("applyClan",
+                         self._actions("wallet-07", self._state(clan_id="c1")))
+
+    def test_a_wallet_added_later_joins_with_no_extra_step(self):
+        """A brand-new wallet is just another wallet with no clan."""
+        self.registry.record_clan("c1", "wallet-01")
+        self.assertIn("applyClan", self._actions("wallet-99"))
+
+    def test_joining_can_be_switched_off(self):
+        self.registry.record_clan("c1", "wallet-01")
+        self.assertNotIn("applyClan",
+                         self._actions("wallet-07", cfg=self._cfg(clan_auto_join=False)))
+
+    # --- admitting ---
+    def test_the_leader_admits_its_own_fleet(self):
+        self.registry.record_clan("c1", "wallet-01")
+        ctx = {"membership": clan.ClanMembership(clan_id="c1", role="leader"),
+               "fleet_uids": {"solana:AAA"},
+               "applications": [{"clanId": "c1", "userId": "solana:AAA",
+                                 "status": "pending", "resolvedAt": None,
+                                 "applicationId": "app1"}]}
+        self.assertIn("resolveApplication",
+                      self._actions("wallet-01", self._state(clan_id="c1"), ctx=ctx))
+
+    def test_the_leader_never_admits_a_stranger(self):
+        self.registry.record_clan("c1", "wallet-01")
+        ctx = {"membership": clan.ClanMembership(clan_id="c1", role="leader"),
+               "fleet_uids": {"solana:AAA"},
+               "applications": [{"clanId": "c1", "userId": "solana:STRANGER",
+                                 "status": "pending", "resolvedAt": None,
+                                 "applicationId": "app1"}]}
+        self.assertNotIn("resolveApplication",
+                         self._actions("wallet-01", self._state(clan_id="c1"), ctx=ctx))
+
+    def test_a_plain_member_does_not_try_to_admit_anyone(self):
+        self.registry.record_clan("c1", "wallet-01")
+        ctx = {"membership": clan.ClanMembership(clan_id="c1", role="member"),
+               "fleet_uids": {"solana:AAA"},
+               "applications": [{"clanId": "c1", "userId": "solana:AAA",
+                                 "status": "pending", "resolvedAt": None,
+                                 "applicationId": "app1"}]}
+        self.assertNotIn("resolveApplication",
+                         self._actions("wallet-02", self._state(clan_id="c1"), ctx=ctx))

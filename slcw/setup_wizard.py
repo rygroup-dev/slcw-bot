@@ -137,6 +137,11 @@ def render_env(values: dict) -> str:
               f"SLCW_CLAN_ENABLED={values.get('SLCW_CLAN_ENABLED', 'true')}",
               f"SLCW_CLAN_DONATE_GOLD={values.get('SLCW_CLAN_DONATE_GOLD', 'false')}",
               f"SLCW_CLAN_GOLD_RESERVE={values.get('SLCW_CLAN_GOLD_RESERVE', '5000')}",
+              f"SLCW_CLAN_FOUNDER_WALLET={values.get('SLCW_CLAN_FOUNDER_WALLET', '')}",
+              f"SLCW_CLAN_AUTO_FOUND={values.get('SLCW_CLAN_AUTO_FOUND', 'false')}",
+              f"SLCW_CLAN_AUTO_JOIN={values.get('SLCW_CLAN_AUTO_JOIN', 'true')}",
+              f"SLCW_CLAN_NAME={values.get('SLCW_CLAN_NAME', '')}",
+              f"SLCW_CLAN_TAG={values.get('SLCW_CLAN_TAG', '')}",
               f"SLCW_GOLD_RESERVE={values.get('SLCW_GOLD_RESERVE', '500')}",
               f"SLCW_RICH_DROP_GOLD={values.get('SLCW_RICH_DROP_GOLD', '2000')}",
               ""]

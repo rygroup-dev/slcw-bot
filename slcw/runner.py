@@ -80,6 +80,9 @@ class Fleet:
         # keeps clan reads off the hot path.
         self.last_clan: dict = {}
         self._clan_cache: dict = {}
+        # The clan this fleet founded, and which wallets have already applied.
+        # Shared across every worker so "found exactly once" holds fleet-wide.
+        self.clan_registry = clan_mod.ClanRegistry()
         self._threads: dict = {}
         self._watchdog_thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -332,6 +335,12 @@ class Fleet:
             status.state["xp_needed"] = leveling.xp_required(state.level)
             status.equipment = state.equipment or {}
 
+            if decision.action in ("createClan", "applyClan", "resolveApplication"):
+                self._record_clan_outcome(wallet["id"], decision)
+                # A clan action changes who this wallet is; drop the cached
+                # snapshot so the next cycle re-reads it.
+                self._clan_cache.pop(wallet["id"], None)
+
             if decision.error:
                 self._register_error(status, decision.error)
             else:
@@ -376,14 +385,20 @@ class Fleet:
         for CLAN_CACHE_SECONDS rather than fetched every cycle — quest
         requirements move in hours, not seconds.
         """
-        empty = {"membership": None, "quest": None}
+        base = {"membership": None, "quest": None,
+                "registry": self.clan_registry,
+                "fleet_uids": self._fleet_uids(), "applications": []}
         if not self.config.clan_enabled:
-            return empty
+            return {"membership": None, "quest": None}
 
         clan_id = str((state.raw or {}).get("clanId") or "")
+        if clan_id:
+            # Whichever wallet is in a clan, adopt that id once. This is what
+            # makes founding survive a restart even if the create reply was lost.
+            self.clan_registry.record_clan(clan_id, wallet_id)
         if not clan_id:
             self._clan_cache.pop(wallet_id, None)
-            return empty
+            return base
 
         cached = self._clan_cache.get(wallet_id)
         if cached and time.time() - cached["fetched_at"] < CLAN_CACHE_SECONDS:
@@ -398,13 +413,54 @@ class Fleet:
                 if parsed is not None and not parsed.completed:
                     quest = parsed
                     break
-            context = {"membership": membership, "quest": quest}
+            applications = []
+            if membership.role in ("leader", "officer"):
+                applications = api.get_clan_applications(session, clan_id)
+            context = dict(base, membership=membership, quest=quest,
+                           applications=applications)
         except (TransportError, ApiError):
             # A clan read failing must never stop the wallet playing the game.
-            return empty
+            return base
 
         self._clan_cache[wallet_id] = {"fetched_at": time.time(), "context": context}
         return context
+
+    def _fleet_uids(self) -> set:
+        """Player ids for every wallet in the vault, as the game derives them.
+
+        The leader compares an application's `userId` against this set, so a
+        stranger's request is never auto-accepted into a clan sized for one
+        operator's fleet.
+        """
+        if not self.vault.is_unlocked:
+            return set()
+        return {clan_mod.fleet_uid(w.get("public_key", ""))
+                for w in self.vault.wallets() if w.get("public_key")}
+
+    def _record_clan_outcome(self, wallet_id: str, decision) -> None:
+        """Persist what a clan action did, so it is never repeated blindly."""
+        result = decision.result or {}
+        payload = result.get("result") if isinstance(result.get("result"), dict) else result
+        if decision.action == "createClan" and not decision.error:
+            clan_id = str((payload or {}).get("clanId") or "")
+            if clan_id:
+                self.clan_registry.record_clan(clan_id, wallet_id)
+            self.notifier.send(
+                f"\U0001F6E1 <b>{wallet_id}</b> mendirikan clan "
+                f"<b>{self.config.clan_name}</b> [{self.config.clan_tag}]"
+                + (f"\n<code>{clan_id}</code>" if clan_id else ""))
+        elif decision.action == "applyClan":
+            if decision.error:
+                return
+            app_id = str((payload or {}).get("applicationId") or "")
+            self.clan_registry.record_application(wallet_id, app_id)
+        elif decision.action == "resolveApplication" and not decision.error:
+            # The applicant is now a member; drop its pending marker so a later
+            # cycle does not think it is still waiting.
+            for other, entry in list(
+                    (self.clan_registry.data.get("applications") or {}).items()):
+                if entry.get("application_id") == decision.params.get("applicationId"):
+                    self.clan_registry.clear_application(other)
 
     def _register_error(self, status: WalletStatus, message: str) -> None:
         status.consecutive_errors += 1
