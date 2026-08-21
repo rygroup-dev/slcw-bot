@@ -31,8 +31,23 @@ def parse_env_text(text: str) -> dict:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
-        values[key.strip()] = value.strip()
+        value = value.strip()
+        # systemd's EnvironmentFile strips a surrounding pair of quotes, so a
+        # value containing spaces has to be quoted there. Read it the same way
+        # here, or the daemon and every CLI path disagree about what the value is.
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        values[key.strip()] = value
     return values
+
+
+def _env_value(value) -> str:
+    """Quote a value that systemd would otherwise split on whitespace."""
+    text = str(value)
+    if text and (" " in text or "\t" in text) and not (
+            text[0] == text[-1] and text[0] in ("'", '"')):
+        return f'"{text}"'
+    return text
 
 
 def persist_overrides(updates: dict, path: Path | None = None) -> None:
@@ -57,12 +72,12 @@ def persist_overrides(updates: dict, path: Path | None = None) -> None:
             continue
         key = stripped.partition("=")[0].strip()
         if key in remaining:
-            lines[index] = f"{key}={remaining.pop(key)}"
+            lines[index] = f"{key}={_env_value(remaining.pop(key))}"
 
     if remaining:
         if lines and lines[-1].strip():
             lines.append("")
-        lines.extend(f"{key}={value}" for key, value in remaining.items())
+        lines.extend(f"{key}={_env_value(value)}" for key, value in remaining.items())
 
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")

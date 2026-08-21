@@ -71,5 +71,33 @@ class PersistOverridesTests(unittest.TestCase):
         self.assertEqual(os.environ["SLCW_TEST_ONLY_KEY"], "9")
 
 
+class QuotedValueTests(unittest.TestCase):
+    """A clan name has a space in it, and systemd would split on that."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.path = Path(self.dir.name) / ".env"
+
+    def test_a_value_with_a_space_is_written_quoted(self):
+        persist_overrides({"SLCW_CLAN_NAME": "RY Group"}, path=self.path)
+        self.assertIn('SLCW_CLAN_NAME="RY Group"', self.path.read_text())
+
+    def test_and_reads_back_without_the_quotes(self):
+        persist_overrides({"SLCW_CLAN_NAME": "RY Group"}, path=self.path)
+        self.assertEqual(parse_env_text(self.path.read_text())["SLCW_CLAN_NAME"],
+                         "RY Group")
+
+    def test_a_plain_value_is_left_unquoted(self):
+        persist_overrides({"SLCW_CLAN_TAG": "RYG"}, path=self.path)
+        self.assertIn("SLCW_CLAN_TAG=RYG", self.path.read_text())
+        self.assertNotIn('"RYG"', self.path.read_text())
+
+    def test_an_existing_quoted_value_is_read_unquoted(self):
+        self.path.write_text("SLCW_CLAN_NAME='RY Group'\n")
+        self.assertEqual(parse_env_text(self.path.read_text())["SLCW_CLAN_NAME"],
+                         "RY Group")
+
+
 if __name__ == "__main__":
     unittest.main()

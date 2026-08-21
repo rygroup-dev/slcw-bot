@@ -495,6 +495,11 @@ class AutoFoundJoinTests(unittest.TestCase):
         self.registry.record_clan("c1", "wallet-01")
         self.assertIn("applyClan", self._actions("wallet-99"))
 
+    def test_the_founder_does_not_apply_to_its_own_clan(self):
+        """Between createClan returning and clanId appearing on the document."""
+        self.registry.record_clan("c1", "wallet-01")
+        self.assertNotIn("applyClan", self._actions("wallet-01"))
+
     def test_joining_can_be_switched_off(self):
         self.registry.record_clan("c1", "wallet-01")
         self.assertNotIn("applyClan",

@@ -457,8 +457,15 @@ class Orchestrator:
         # Any wallet outside the clan applies to it, including one added to the
         # vault long after the clan was founded — nothing here is per-wallet
         # configuration, so a new wallet needs no extra step.
+        # The founder is skipped here: it is already the leader, and between
+        # createClan returning and its clanId appearing on the player document
+        # it would otherwise queue an application to its own clan.
+        founded_by_this_wallet = (
+            registry is not None
+            and str(registry.data.get("founder_wallet") or "") == (wallet_id or ""))
         if (self.config.clan_auto_join and registry is not None
                 and registry.founded and not in_clan
+                and not founded_by_this_wallet
                 and not registry.has_pending_application(wallet_id or "")):
             return econ.free_candidate(
                 "applyClan", {"clanId": registry.clan_id},
