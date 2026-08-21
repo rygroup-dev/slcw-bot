@@ -83,6 +83,7 @@ class Fleet:
         # The clan this fleet founded, and which wallets have already applied.
         # Shared across every worker so "found exactly once" holds fleet-wide.
         self.clan_registry = clan_mod.ClanRegistry()
+        self._clan_doc: dict | None = None
         self._threads: dict = {}
         self._watchdog_thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -300,7 +301,11 @@ class Fleet:
                 self.last_task_status = task_status
 
             clan_context = self._clan_context(api, session, state, wallet["id"])
-            if clan_context.get("membership") is not None:
+            # Keep the snapshot when the wallet is a member, and also when it
+            # is not but the clan document was read — that is what lets the
+            # Telegram view show seats before the first wallet is admitted.
+            if (clan_context.get("membership") is not None
+                    or clan_context.get("clan_info") is not None):
                 self.last_clan[wallet["id"]] = clan_context
 
             orchestrator = Orchestrator(config=self.config, api=api, rng=rng)
@@ -335,11 +340,16 @@ class Fleet:
             status.state["xp_needed"] = leveling.xp_required(state.level)
             status.equipment = state.equipment or {}
 
-            if decision.action in ("createClan", "applyClan", "resolveApplication"):
+            if decision.action in ("createClan", "applyClan", "resolveApplication",
+                                   "generateClanQuest"):
                 self._record_clan_outcome(wallet["id"], decision)
                 # A clan action changes who this wallet is; drop the cached
                 # snapshot so the next cycle re-reads it.
                 self._clan_cache.pop(wallet["id"], None)
+                # Founding, admitting and starting a quest all move numbers on
+                # the clan document itself — seats taken, level, active quest —
+                # so the fleet-wide copy has to go too.
+                self._clan_doc = None
 
             if decision.error:
                 self._register_error(status, decision.error)
@@ -385,9 +395,13 @@ class Fleet:
         for CLAN_CACHE_SECONDS rather than fetched every cycle — quest
         requirements move in hours, not seconds.
         """
+        info = self._clan_info(api, session)
         base = {"membership": None, "quest": None,
                 "registry": self.clan_registry,
-                "fleet_uids": self._fleet_uids(), "applications": []}
+                "fleet_uids": self._fleet_uids(), "applications": [],
+                "clan_info": info,
+                "seat_holders": self._seat_holders(info),
+                "levels_by_uid": self._levels_by_uid()}
         if not self.config.clan_enabled:
             return {"membership": None, "quest": None}
 
@@ -425,6 +439,61 @@ class Fleet:
         self._clan_cache[wallet_id] = {"fetched_at": time.time(), "context": context}
         return context
 
+    def _clan_info(self, api, session) -> "clan_mod.ClanInfo | None":
+        """The clan document, read once for the whole fleet and cached.
+
+        Every wallet needs the same three numbers out of it — level, member
+        count and seats — so reading it per wallet would multiply one Firestore
+        document by thirty for nothing. A wallet that is not in the clan needs
+        it too: that is exactly the wallet deciding whether to apply.
+        """
+        clan_id = self.clan_registry.clan_id
+        if not self.config.clan_enabled or not clan_id:
+            return None
+        cached = getattr(self, "_clan_doc", None)
+        if cached and time.time() - cached["fetched_at"] < CLAN_CACHE_SECONDS:
+            return cached["info"]
+        try:
+            info = clan_mod.parse_clan(clan_id, api.get_clan(session, clan_id))
+        except (TransportError, ApiError):
+            # Never let a failed read look like a clan with no seats.
+            return cached["info"] if cached else None
+        self._clan_doc = {"fetched_at": time.time(), "info": info}
+        return info
+
+    def _wallet_levels(self) -> dict:
+        """Wallet id -> level, for every wallet that has reported one."""
+        return {wallet_id: int((status.state or {}).get("level", 0) or 0)
+                for wallet_id, status in self.status.items()}
+
+    def _levels_by_uid(self) -> dict:
+        """The same levels keyed the way an application identifies its sender."""
+        if not self.vault.is_unlocked:
+            return {}
+        levels = self._wallet_levels()
+        out = {}
+        for wallet in self.vault.wallets():
+            key = wallet.get("public_key")
+            if key:
+                out[clan_mod.fleet_uid(key)] = levels.get(wallet.get("id"), 0)
+        return out
+
+    def _seat_holders(self, info) -> list | None:
+        """Wallets entitled to one of the clan's seats, strongest first.
+
+        A clan of level L holds 5L+5 members. With thirty wallets and a clan
+        that starts at ten seats, most of the fleet must not apply at all — an
+        application nobody can accept sits in the queue until it is cancelled by
+        hand. The roster is simply the top wallets by level, so it widens on its
+        own as clan quests raise the level, and a wallet added to the vault
+        later competes for a seat on the same terms as the rest.
+        """
+        if info is None:
+            return None
+        if info.free_seats - self.clan_registry.pending_applications() <= 0:
+            return []
+        return clan_mod.seat_ranking(self._wallet_levels(), info.max_members)
+
     def _fleet_uids(self) -> set:
         """Player ids for every wallet in the vault, as the game derives them.
 
@@ -454,6 +523,15 @@ class Fleet:
                 return
             app_id = str((payload or {}).get("applicationId") or "")
             self.clan_registry.record_application(wallet_id, app_id)
+        elif decision.action == "generateClanQuest" and not decision.error:
+            quest = (payload or {}).get("quest") or payload or {}
+            wanted = ", ".join(
+                f"{r.get('required', 0)}x {r.get('itemName') or r.get('itemId')}"
+                for r in (quest.get("requirements") or [])) or "?"
+            self.notifier.send(
+                f"\U0001F4DC quest clan baru: <b>{wanted}</b>\n"
+                f"+{clan_mod.QUEST_CLAN_XP:,} clan XP kalau selesai "
+                f"(seat bertambah tiap level)")
         elif decision.action == "resolveApplication" and not decision.error:
             # The applicant is now a member; drop its pending marker so a later
             # cycle does not think it is still waiting.

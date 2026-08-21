@@ -230,7 +230,8 @@ def cmd_clan_status() -> int:
     config = config_mod.load()
     vault = Vault()
     unlock(vault)
-    print(f"{'wallet':12} {'gold':>8} {'clan':22} {'role':9} {'dkp':>6}  note")
+    print(f"{'wallet':12} {'lvl':>4} {'gold':>8} {'clan':22} {'role':9} {'dkp':>6}  note")
+    levels, info = {}, None
     for entry in vault.wallets():
         wallet_id = entry["id"]
         transport = Transport.for_wallet(config, entry)
@@ -259,11 +260,32 @@ def cmd_clan_status() -> int:
                 if member.donated_today():
                     flags.append("donated today")
                 note = ", ".join(flags)
-            print(f"{wallet_id:12} {state.gold:>8,} {short:22} {role:9} {dkp:>6}  {note}")
+                if info is None:
+                    info = clan_mod.parse_clan(clan_id, doc)
+            levels[wallet_id] = state.level
+            print(f"{wallet_id:12} {state.level:>4} {state.gold:>8,} {short:22} "
+                  f"{role:9} {dkp:>6}  {note}")
         except Exception as exc:  # one bad wallet must not hide the rest
             print(f"{wallet_id:12} {'?':>8} {'error':22} {'-':9} {'-':>6}  {exc}")
         finally:
             transport.close()
+
+    # Seats are 5 x level + 5, measured against every clan in the game. With
+    # more wallets than seats the fleet cannot all be inside, so print who the
+    # decision loop will actually put there and what it costs to widen it.
+    fleet = len(levels)
+    if info is not None:
+        print(f"\n{info.name or info.clan_id}: level {info.level}, "
+              f"{info.member_count}/{info.max_members} seats, "
+              f"{info.xp:,}/{info.xp_required:,} clan XP")
+        if info.max_members < fleet:
+            need = clan_mod.levels_for_seats(fleet)
+            missing = max(0, clan_mod.xp_to_reach(info.level, need) - info.xp)
+            print(f"  level {need} ({clan_mod.max_members(need)} seats) holds all "
+                  f"{fleet} wallets: {missing:,} clan XP away, "
+                  f"~{-(-missing // clan_mod.QUEST_CLAN_XP)} clan quest(s)")
+        roster = clan_mod.seat_ranking(levels, info.max_members)
+        print("  seats go to: " + ", ".join(roster))
     return 0
 
 

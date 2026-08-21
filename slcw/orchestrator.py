@@ -463,8 +463,15 @@ class Orchestrator:
         founded_by_this_wallet = (
             registry is not None
             and str(registry.data.get("founder_wallet") or "") == (wallet_id or ""))
+        # A clan of level L holds 5L+5 members, so a new one has ten seats for a
+        # fleet of thirty wallets. The runner ranks the wallets outside the clan
+        # by level and passes the ones the free seats can actually take; anybody
+        # else applying would only park a request in a queue that can never
+        # clear it. A runner that passes no ranking keeps the old behaviour.
+        seat_holders = clan_context.get("seat_holders")
+        holds_a_seat = seat_holders is None or (wallet_id or "") in seat_holders
         if (self.config.clan_auto_join and registry is not None
-                and registry.founded and not in_clan
+                and registry.founded and not in_clan and holds_a_seat
                 and not founded_by_this_wallet
                 and not registry.has_pending_application(wallet_id or "")):
             return econ.free_candidate(
@@ -482,7 +489,8 @@ class Orchestrator:
         if membership.role in ("leader", "officer"):
             ours = clan_mod.acceptable_applications(
                 clan_context.get("applications") or [],
-                membership.clan_id, clan_context.get("fleet_uids") or set())
+                membership.clan_id, clan_context.get("fleet_uids") or set(),
+                levels=clan_context.get("levels_by_uid"))
             if ours:
                 app = ours[0]
                 return econ.free_candidate(
@@ -492,6 +500,18 @@ class Orchestrator:
                     f"admitting {app.get('displayName') or app.get('userId', '?')}")
 
         quest = clan_context.get("quest")
+        # Starting the weekly quest is what buys the clan its seats. A quest
+        # pays 3,500 clan XP, and carrying a new clan from level 1 to level 6 —
+        # ten seats to thirty-five — costs 3,417, so the fleet outgrows its own
+        # founding size on the first quest it finishes. Nothing else measured in
+        # the game converts into clan levels at anything like that rate, and the
+        # 2,000 raw items it asks for have no market bids to give up.
+        if quest is None and membership.role == "leader":
+            return econ.free_candidate(
+                "generateClanQuest", {"clanId": membership.clan_id},
+                f"starting the weekly clan quest "
+                f"(+{clan_mod.QUEST_CLAN_XP:,} clan XP)")
+
         if quest is not None:
             item, amount = clan_mod.submittable(quest, holdings or {})
             if item and amount > 0:

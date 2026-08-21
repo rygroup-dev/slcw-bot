@@ -407,3 +407,41 @@ class MapAndTaskViewTests(unittest.TestCase):
 
     def test_task_view_without_data(self):
         self.assertIn("Belum ada data", ui.render_tasks(None))
+
+
+class ClanCapacityViewTests(unittest.TestCase):
+    """The clan view has to answer 'how many wallets fit, and what buys more'."""
+
+    def _snapshot(self, level=1, members=7, seats=None):
+        from slcw import clan as clan_mod
+        info = clan_mod.parse_clan("c1", {
+            "name": "RY Group", "level": level, "xp": 100,
+            "xpRequired": clan_mod.level_xp_required(level),
+            "maxMembers": seats or clan_mod.max_members(level),
+            "memberCount": members})
+        return {"wallet-01": {
+            "membership": clan_mod.ClanMembership(clan_id="c1", role="leader"),
+            "quest": None, "clan_info": info}}
+
+    def test_the_seat_count_is_shown(self):
+        out = ui.render_clan(self._snapshot(), donate_gold=False, enabled=True)
+        self.assertIn("7/10", out)
+
+    def test_the_level_that_would_fit_the_fleet_is_shown(self):
+        out = ui.render_clan(self._snapshot(), donate_gold=False, enabled=True,
+                             fleet_size=30)
+        self.assertIn("level 5", out)
+
+    def test_a_clan_that_already_fits_the_fleet_says_so(self):
+        out = ui.render_clan(self._snapshot(level=6, members=30),
+                             donate_gold=False, enabled=True, fleet_size=30)
+        self.assertIn("35", out)
+        self.assertNotIn("level 5", out)
+
+    def test_the_view_still_renders_without_clan_info(self):
+        from slcw import clan as clan_mod
+        snap = {"wallet-01": {
+            "membership": clan_mod.ClanMembership(clan_id="c1", role="leader"),
+            "quest": None}}
+        self.assertIn("wallet-01", ui.render_clan(snap, donate_gold=False,
+                                                  enabled=True))

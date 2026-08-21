@@ -1185,7 +1185,8 @@ def render_why(status: dict) -> str:
             f"dan biaya HP.</i>")
 
 
-def render_clan(clan_snapshots: dict, donate_gold: bool, enabled: bool) -> str:
+def render_clan(clan_snapshots: dict, donate_gold: bool, enabled: bool,
+                fleet_size: int = 0) -> str:
     """Per-wallet clan standing: role, DKP, today's donation, active quest."""
     from slcw import clan as clan_mod
 
@@ -1211,6 +1212,24 @@ def render_clan(clan_snapshots: dict, donate_gold: bool, enabled: bool) -> str:
         ]
         return "\n".join(lines)
 
+    info = next((ctx.get("clan_info") for ctx in clan_snapshots.values()
+                 if ctx.get("clan_info") is not None), None)
+    if info is not None:
+        lines.append(f"<b>{info.name or info.clan_id}</b> · level {info.level} · "
+                     f"<b>{info.member_count}/{info.max_members}</b> seat")
+        # Seats are 5 x level + 5, and the only measured way to buy clan levels
+        # is the weekly quest at 3,500 XP a time, so this is the number that
+        # decides how much of the fleet can be inside at all.
+        if fleet_size and info.max_members < fleet_size:
+            need = clan_mod.levels_for_seats(fleet_size)
+            xp = max(0, clan_mod.xp_to_reach(info.level, need) - info.xp)
+            quests = -(-xp // clan_mod.QUEST_CLAN_XP) if xp else 0
+            lines.append(
+                f"   butuh <b>level {need}</b> ({clan_mod.max_members(need)} seat) "
+                f"buat {fleet_size} wallet — {xp:,} clan XP lagi "
+                f"≈ {quests} quest")
+        lines.append("")
+
     for wallet_id, ctx in sorted(clan_snapshots.items()):
         member = ctx.get("membership")
         if member is None or not member.is_member:
@@ -1231,6 +1250,7 @@ def render_clan(clan_snapshots: dict, donate_gold: bool, enabled: bool) -> str:
                      f"+{quest.reward_clan_xp:,} clan XP")
         for item, missing in list(quest.outstanding().items())[:4]:
             lines.append(f"     • {item}: kurang {missing:,}")
-    if len(lines) <= 2:
+    if not any(ctx.get("membership") is not None
+               and ctx["membership"].is_member for ctx in clan_snapshots.values()):
         lines.append("Belum ada wallet yang masuk clan.")
     return "\n".join(lines)

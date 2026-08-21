@@ -61,6 +61,112 @@ ROLES = ("initiate", "member", "officer", "leader")
 
 CREATE_CLAN_GOLD = 20_000
 
+# Seats. Measured against every clan that exists in the game (all eight, read
+# from Firestore on 2026-08-21): maxMembers is 5 x level + 5 without exception,
+# from Wolf at level 1 with 10 seats to LEGION at level 31 with 160.
+MAX_MEMBERS_BASE = 5
+MAX_MEMBERS_PER_LEVEL = 5
+
+# The clan level curve, from the same eight documents. xpRequired is exactly
+# 1.5 * (level + 1) * (level^2 + 100) for levels 12, 15, 22, 27 and 31 — the
+# five distinct levels the live game has an example of. Level 1 is the one
+# exception: the formula gives 303 and both level-1 clans store 300, so the
+# measured value wins over the extrapolation.
+LEVEL_ONE_XP_REQUIRED = 300
+
+# A clan quest asks for 2,000 of a single raw item and pays this much clan XP
+# on completion, plus a 1,000 DKP pool split between contributors. Observed on
+# Wolf (spiderfang) and Asgard (frogslime); one quest runs at a time on a
+# 7-day window. This matters more than it looks: 3,500 XP is more than the
+# 3,417 it costs to carry a brand-new clan from level 1 to level 6, which is
+# the difference between 10 seats and 35.
+QUEST_CLAN_XP = 3_500
+QUEST_ITEM_REQUIRED = 2_000
+
+
+def max_members(level: int) -> int:
+    """Seats a clan of this level has."""
+    return MAX_MEMBERS_PER_LEVEL * max(1, int(level)) + MAX_MEMBERS_BASE
+
+
+def level_xp_required(level: int) -> int:
+    """XP needed to leave this level for the next one."""
+    level = max(1, int(level))
+    if level == 1:
+        return LEVEL_ONE_XP_REQUIRED
+    return (3 * (level + 1) * (level * level + 100)) // 2
+
+
+def levels_for_seats(seats: int) -> int:
+    """Cheapest clan level that holds this many members."""
+    level = 1
+    while max_members(level) < int(seats):
+        level += 1
+    return level
+
+
+def xp_to_reach(level: int, target: int) -> int:
+    """Total clan XP between two levels."""
+    return sum(level_xp_required(step) for step in range(int(level), int(target)))
+
+
+@dataclass
+class ClanInfo:
+    """The clan document itself: how big it is and how big it may become."""
+
+    clan_id: str = ""
+    name: str = ""
+    level: int = 1
+    xp: int = 0
+    xp_required: int = 0
+    max_members: int = 0
+    member_count: int = 0
+
+    @property
+    def free_seats(self) -> int:
+        return max(0, self.max_members - self.member_count)
+
+    @property
+    def is_full(self) -> bool:
+        return self.free_seats <= 0
+
+    def seats_at(self, level: int) -> int:
+        return max_members(level)
+
+    def xp_for_seats(self, seats: int) -> int:
+        """Clan XP still to earn before the clan holds this many members."""
+        return xp_to_reach(self.level, levels_for_seats(seats)) - self.xp
+
+
+def parse_clan(clan_id: str, doc: dict | None) -> ClanInfo | None:
+    if not isinstance(doc, dict) or not doc:
+        return None
+    level = int(doc.get("level", 1) or 1)
+    return ClanInfo(
+        clan_id=clan_id or "",
+        name=str(doc.get("name") or ""),
+        level=level,
+        xp=int(doc.get("xp", 0) or 0),
+        xp_required=int(doc.get("xpRequired", 0) or 0) or level_xp_required(level),
+        # maxMembers is stored on the document, but a read that lost the field
+        # must not read as "no seats at all" and stop the fleet joining.
+        max_members=int(doc.get("maxMembers", 0) or 0) or max_members(level),
+        member_count=int(doc.get("memberCount", 0) or 0),
+    )
+
+
+def seat_ranking(levels: dict, seats: int) -> list:
+    """Which wallets take the free seats: highest level first.
+
+    A new clan has ten seats and this fleet has thirty wallets, so most of them
+    must not apply at all — an application that can never be accepted sits in
+    the clan's queue forever. Ordering by level puts the wallets that can
+    actually feed a clan quest inside, and the tie-break on wallet id keeps the
+    choice identical between cycles so the set does not churn.
+    """
+    ranked = sorted((levels or {}).items(), key=lambda kv: (-int(kv[1] or 0), kv[0]))
+    return [wallet_id for wallet_id, _ in ranked[:max(0, int(seats))]]
+
 
 @dataclass
 class ClanQuest:
@@ -273,14 +379,30 @@ class ClanRegistry:
             return False
         return (now or time.time()) - entry.get("ts", 0) < APPLICATION_TTL_S
 
+    def pending_applications(self, now: float | None = None) -> int:
+        """How many wallets are already waiting for a seat.
+
+        A seat a wallet has applied for is spoken for even though memberCount
+        has not moved yet, so applications have to be counted against the free
+        seats or the whole fleet applies at once for the nine that exist.
+        """
+        now = now or time.time()
+        return sum(1 for entry in (self.data.get("applications") or {}).values()
+                   if now - entry.get("ts", 0) < APPLICATION_TTL_S)
+
 
 def acceptable_applications(applications: list, clan_id: str,
-                            fleet_uids: set) -> list:
+                            fleet_uids: set, levels: dict | None = None) -> list:
     """Pending applications to our clan from our own wallets, and nobody else's.
 
     A leader that auto-accepted anything in its queue would admit strangers into
     a clan built to hold one operator's fleet, and every stranger admitted takes
     one of the ten seats a new clan has.
+
+    `levels` maps a player id to that wallet's level. When it is supplied the
+    queue is served strongest first, so a clan with fewer seats than applicants
+    fills up with the wallets that can carry a clan quest rather than with
+    whichever one happened to apply earliest.
     """
     out = []
     for app in applications or []:
@@ -292,4 +414,6 @@ def acceptable_applications(applications: list, clan_id: str,
         if str(app.get("userId") or "") not in fleet_uids:
             continue
         out.append(app)
+    if levels:
+        out.sort(key=lambda a: -int(levels.get(str(a.get("userId") or ""), 0) or 0))
     return out

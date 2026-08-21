@@ -6,7 +6,7 @@
 
 [![tests](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml/badge.svg)](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml)
 [![python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab?logo=python&logoColor=white)](https://www.python.org/)
-[![tests](https://img.shields.io/badge/tests-670%20passing-4c1)](tests/)
+[![tests](https://img.shields.io/badge/tests-701%20passing-4c1)](tests/)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 Every action is priced in gold-per-hour before it runs.
@@ -374,11 +374,10 @@ for exactly that reason, recorded in `guardrails.py`.
 Swept against the deployed functions on 2026-08-21, so this is what the server
 answers to today rather than what a bundle implies:
 
-- **Clans** are real and unwired. `searchClans` and `getClanMembers` both return
+- **Clans** are wired; see "Clan seats" below for the part that governs how much
+  of a fleet can be inside one. `searchClans` and `getClanMembers` both return
   data, `createClan` and `leaveClan` exist, and `applyClan` answers "Clan not
-  found" for a bad id — so that, not `joinClan`, is the join path. Clans carry a
-  gold treasury, a level, and per-member `dkp`; the top ones are level 20-30 with
-  members around level 50. Nothing here is scored or called yet.
+  found" for a bad id — so that, not `joinClan`, is the join path.
 - **Expeditions** appear in the frontend bundle (`startExpedition`,
   `finishExpedition`, `claimExpeditionRewards`) and every one of them 404s. The
   feature is built client-side but not deployed, so there is nothing to wire.
@@ -386,6 +385,49 @@ answers to today rather than what a bundle implies:
 
 The hunt task chain, by contrast, is fully wired and is currently the engine's
 only gold stream — `claimTaskReward` pays 1,000 gold per completed task.
+
+#### Clan seats
+
+Read from Firestore on 2026-08-21 across every clan that exists in the game —
+all eight of them, from Wolf at level 1 to LEGION at level 31:
+
+```
+maxMembers = 5 x clan level + 5
+```
+
+No exceptions. A clan is founded at level 1, so it starts with **ten seats**,
+which is the constraint that matters for a fleet larger than ten wallets.
+
+The level curve is `xpRequired = 1.5 * (level + 1) * (level^2 + 100)`, exact for
+levels 12, 15, 22, 27 and 31 — the five the live game has an example of. Level 1
+is the one exception: the formula gives 303 and both level-1 clans store 300, so
+the measured value is used.
+
+That makes the weekly clan quest the whole story. A quest asks for 2,000 of one
+raw item and pays **3,500 clan XP**, while carrying a new clan from level 1 to
+level 6 costs 3,417:
+
+| clan level | 1 | 2 | 3 | 4 | 5 | 6 |
+|---|---|---|---|---|---|---|
+| seats | 10 | 15 | 20 | 25 | 30 | **35** |
+| XP to leave it | 300 | 468 | 654 | 870 | 1,125 | 1,428 |
+
+So one finished quest takes a brand-new clan past 35 seats. The items it asks
+for are raw drops with no market bids at all, so the fleet gives up nothing it
+could have sold. `generateClanQuest` is therefore taken automatically by the
+leader whenever no quest is running, and `submitQuestResources` feeds it.
+
+Whether anything else grants clan XP is not established: Asgard reached level 12
+having completed a single quest, so there is a second source this fleet has not
+measured. Donations are the obvious candidate and stay off by default anyway.
+
+Until the level is bought, the seats have to be rationed. The runner ranks every
+wallet by level and only the top `maxMembers` of them apply, so a thirty-wallet
+fleet does not queue twenty-nine applications against nine free seats. The
+ranking is recomputed each cycle, which is what makes this self-correcting: as
+quests raise the level the roster widens on its own, a wallet added to the vault
+later competes on the same terms, and the leader serves its queue highest level
+first.
 
 #### A benign rejection is not always a no-op
 
@@ -552,7 +594,7 @@ See [`.env.example`](.env.example) for the annotated full list.
 | `SLCW_CLAN_FOUNDER_WALLET` | *(unset)* | wallet that saves for the 20,000 gold a clan costs; it spends no gold until it can |
 | `SLCW_CLAN_AUTO_FOUND` | `false` | let that wallet found the clan by itself, exactly once |
 | `SLCW_CLAN_NAME` / `SLCW_CLAN_TAG` | *(unset)* | clan identity; tag is at most 4 characters and cannot be changed later |
-| `SLCW_CLAN_AUTO_JOIN` | `true` | every other wallet applies, and the leader admits this vault's wallets only |
+| `SLCW_CLAN_AUTO_JOIN` | `true` | the highest-level wallets apply up to the clan's seat count, and the leader admits this vault's wallets only |
 | `SLCW_FARMING_GOLD` | `true` | allow gold-mode gathering, which locks a wallet for hours |
 | `SLCW_FARMING_GOLD_HOURS` | `8` | how long a gold-mode run lasts (1-8) |
 | `SLCW_TRAVEL_MARGIN` | `1.35` | how much better a destination must be before moving |

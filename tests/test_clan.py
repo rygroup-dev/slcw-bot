@@ -535,3 +535,250 @@ class AutoFoundJoinTests(unittest.TestCase):
                                  "applicationId": "app1"}]}
         self.assertNotIn("resolveApplication",
                          self._actions("wallet-02", self._state(clan_id="c1"), ctx=ctx))
+
+
+class CapacityTests(unittest.TestCase):
+    """Seats and the level curve, measured against every clan live in the game."""
+
+    # Read from Firestore on 2026-08-21: every clan that exists, with the
+    # maxMembers and xpRequired the server itself stores.
+    LIVE = [
+        # (level, maxMembers, xpRequired, name)
+        (1, 10, 300, "Wolf"),
+        (1, 10, 300, "Team Krm"),
+        (12, 65, 4758, "Asgard"),
+        (15, 80, 7800, "Dragon Hunters Inc"),
+        (15, 80, 7800, "The Shadows"),
+        (22, 115, 20148, "Avalon"),
+        (27, 140, 34818, "Th0rity"),
+        (31, 160, 50928, "LEGION"),
+    ]
+
+    def test_max_members_matches_every_live_clan(self):
+        for level, seats, _xp, name in self.LIVE:
+            self.assertEqual(clan.max_members(level), seats, name)
+
+    def test_a_new_clan_has_ten_seats(self):
+        self.assertEqual(clan.max_members(1), 10)
+
+    def test_xp_required_matches_every_live_clan(self):
+        for level, _seats, xp, name in self.LIVE:
+            self.assertEqual(clan.level_xp_required(level), xp, name)
+
+    def test_levels_for_seats_finds_the_cheapest_level_that_fits(self):
+        self.assertEqual(clan.levels_for_seats(10), 1)
+        self.assertEqual(clan.levels_for_seats(11), 2)
+        self.assertEqual(clan.levels_for_seats(30), 5)
+        self.assertEqual(clan.levels_for_seats(35), 6)
+
+    def test_xp_to_reach_sums_the_levels_in_between(self):
+        self.assertEqual(clan.xp_to_reach(1, 2), 300)
+        self.assertEqual(clan.xp_to_reach(1, 6), 3_417)
+        self.assertEqual(clan.xp_to_reach(3, 3), 0)
+
+    def test_one_quest_carries_a_new_clan_to_thirty_five_seats(self):
+        """The reason the fleet can outgrow ten seats at all."""
+        self.assertGreaterEqual(clan.QUEST_CLAN_XP, clan.xp_to_reach(1, 6))
+        self.assertEqual(clan.max_members(6), 35)
+
+
+class ClanInfoTests(unittest.TestCase):
+
+    def _doc(self, **over):
+        doc = {"level": 1, "xp": 100, "xpRequired": 300,
+               "maxMembers": 10, "memberCount": 7, "name": "Wolf"}
+        doc.update(over)
+        return doc
+
+    def test_a_live_clan_document_parses(self):
+        info = clan.parse_clan("c1", self._doc())
+        self.assertEqual((info.clan_id, info.level, info.max_members,
+                          info.member_count), ("c1", 1, 10, 7))
+
+    def test_free_seats_is_what_is_left(self):
+        self.assertEqual(clan.parse_clan("c1", self._doc()).free_seats, 3)
+
+    def test_a_full_clan_has_no_free_seats(self):
+        info = clan.parse_clan("c1", self._doc(memberCount=10))
+        self.assertEqual(info.free_seats, 0)
+
+    def test_an_overfull_clan_never_reports_negative_seats(self):
+        info = clan.parse_clan("c1", self._doc(memberCount=12))
+        self.assertEqual(info.free_seats, 0)
+
+    def test_max_members_is_derived_when_the_document_omits_it(self):
+        doc = self._doc(level=6)
+        doc.pop("maxMembers")
+        self.assertEqual(clan.parse_clan("c1", doc).max_members, 35)
+
+    def test_an_empty_document_parses_to_nothing(self):
+        self.assertIsNone(clan.parse_clan("c1", None))
+        self.assertIsNone(clan.parse_clan("c1", {}))
+
+
+class SeatRankingTests(unittest.TestCase):
+    """Ten seats and thirty wallets: the highest levels take them."""
+
+    LEVELS = {"w-a": 5, "w-b": 15, "w-c": 12, "w-d": 15, "w-e": 1}
+
+    def test_the_highest_levels_take_the_seats(self):
+        self.assertEqual(clan.seat_ranking(self.LEVELS, 2), ["w-b", "w-d"])
+
+    def test_ties_break_on_wallet_id_so_the_choice_is_stable(self):
+        self.assertEqual(clan.seat_ranking(self.LEVELS, 3),
+                         ["w-b", "w-d", "w-c"])
+        self.assertEqual(clan.seat_ranking(self.LEVELS, 3),
+                         clan.seat_ranking(self.LEVELS, 3))
+
+    def test_more_seats_than_wallets_takes_everyone(self):
+        self.assertEqual(len(clan.seat_ranking(self.LEVELS, 99)), 5)
+
+    def test_no_seats_admits_nobody(self):
+        self.assertEqual(clan.seat_ranking(self.LEVELS, 0), [])
+        self.assertEqual(clan.seat_ranking(self.LEVELS, -3), [])
+
+    def test_an_empty_fleet_ranks_to_nothing(self):
+        self.assertEqual(clan.seat_ranking({}, 5), [])
+
+
+class SeatAwareJoinTests(unittest.TestCase):
+    """Thirty wallets cannot all apply to a clan with ten seats."""
+
+    from slcw.config import Config as _Config
+
+    def _cfg(self, **over):
+        base = dict(enabled=True, dry_run=False, clan_auto_join=True)
+        base.update(over)
+        return self._Config(**base)
+
+    def _actions(self, wallet_id, clan_ctx, config=None):
+        from tests.test_orchestrator import make, FakeApi
+        from slcw.model import parse_player
+        orch = make(config=config or self._cfg(), api=FakeApi())
+        state = parse_player({
+            "level": 12, "energy": 80, "maxEnergy": 100, "balance": 5_000,
+            "currentHealth": 130, "currentMana": 130, "currentLocationId": "farm_3",
+            "attributes": {"wisdom": 3, "vitality": 3},
+            "claimedInitialRewardsV2": list(range(1, 13)),
+            "newbieQuest": 999, "activity": None,
+            "freeEnergyRefillsToday": 3, "lastFreeEnergyRefillDate": "2099-01-01",
+        })
+        return [c.action for c in orch.build_candidates(
+            state, holdings={}, include_travel=False, wallet_id=wallet_id,
+            clan_context=clan_ctx)]
+
+    def _registry(self, tmp):
+        reg = clan.ClanRegistry(path=tmp)
+        reg.record_clan("c1", "wallet-01")
+        return reg
+
+    def _ctx(self, reg, holders):
+        return {"membership": None, "quest": None, "registry": reg,
+                "fleet_uids": set(), "applications": [],
+                "clan_info": clan.parse_clan("c1", {
+                    "level": 1, "maxMembers": 10, "memberCount": 1}),
+                "seat_holders": holders}
+
+    def setUp(self):
+        import tempfile, pathlib
+        self._dir = tempfile.TemporaryDirectory()
+        self.tmp = pathlib.Path(self._dir.name) / "clan.json"
+
+    def tearDown(self):
+        self._dir.cleanup()
+
+    def test_a_wallet_holding_a_seat_applies(self):
+        reg = self._registry(self.tmp)
+        self.assertIn("applyClan",
+                      self._actions("wallet-07", self._ctx(reg, ["wallet-07"])))
+
+    def test_a_wallet_outside_the_seat_ranking_does_not_apply(self):
+        """The other twenty would otherwise queue applications forever."""
+        reg = self._registry(self.tmp)
+        self.assertNotIn("applyClan",
+                         self._actions("wallet-29", self._ctx(reg, ["wallet-07"])))
+
+    def test_no_seat_ranking_supplied_falls_back_to_applying(self):
+        """Older runners pass no ranking; joining must not silently stop."""
+        reg = self._registry(self.tmp)
+        ctx = self._ctx(reg, None)
+        ctx.pop("seat_holders")
+        self.assertIn("applyClan", self._actions("wallet-29", ctx))
+
+    def test_a_full_clan_admits_nobody(self):
+        reg = self._registry(self.tmp)
+        ctx = self._ctx(reg, [])
+        self.assertNotIn("applyClan", self._actions("wallet-07", ctx))
+
+
+class LeaderSeatTests(unittest.TestCase):
+    """A leader with more applicants than seats admits the strongest first."""
+
+    def test_the_highest_level_applicant_is_admitted_first(self):
+        apps = [
+            {"applicationId": "a1", "clanId": "c1", "userId": "solana:LOW",
+             "status": "pending"},
+            {"applicationId": "a2", "clanId": "c1", "userId": "solana:HIGH",
+             "status": "pending"},
+        ]
+        ranked = clan.acceptable_applications(
+            apps, "c1", {"solana:LOW", "solana:HIGH"},
+            levels={"solana:LOW": 4, "solana:HIGH": 15})
+        self.assertEqual([a["applicationId"] for a in ranked], ["a2", "a1"])
+
+    def test_without_levels_the_queue_order_is_kept(self):
+        apps = [
+            {"applicationId": "a1", "clanId": "c1", "userId": "solana:A",
+             "status": "pending"},
+            {"applicationId": "a2", "clanId": "c1", "userId": "solana:B",
+             "status": "pending"},
+        ]
+        ranked = clan.acceptable_applications(apps, "c1", {"solana:A", "solana:B"})
+        self.assertEqual([a["applicationId"] for a in ranked], ["a1", "a2"])
+
+
+class WeeklyQuestTests(unittest.TestCase):
+    """The clan quest is the only measured way to buy seats, so the leader starts it."""
+
+    from slcw.config import Config as _Config
+
+    def _actions(self, ctx, config=None):
+        from tests.test_orchestrator import make, FakeApi
+        from slcw.model import parse_player
+        orch = make(config=config or self._Config(enabled=True, dry_run=False),
+                    api=FakeApi())
+        state = parse_player({
+            "level": 12, "energy": 80, "maxEnergy": 100, "balance": 5_000,
+            "currentHealth": 130, "currentMana": 130, "currentLocationId": "farm_3",
+            "attributes": {"wisdom": 3, "vitality": 3},
+            "claimedInitialRewardsV2": list(range(1, 13)),
+            "newbieQuest": 999, "activity": None, "clanId": "c1",
+            "freeEnergyRefillsToday": 3, "lastFreeEnergyRefillDate": "2099-01-01",
+        })
+        return [c.action for c in orch.build_candidates(
+            state, holdings={}, include_travel=False, wallet_id="wallet-01",
+            clan_context=ctx)]
+
+    def _ctx(self, role="leader", quest=None):
+        return {"membership": clan.ClanMembership(clan_id="c1", role=role),
+                "quest": quest, "registry": None, "fleet_uids": set(),
+                "applications": [], "clan_info": None, "seat_holders": []}
+
+    def test_a_leader_with_no_active_quest_starts_one(self):
+        self.assertIn("generateClanQuest", self._actions(self._ctx()))
+
+    def test_a_leader_with_a_quest_running_does_not_start_another(self):
+        quest = clan.parse_quest({
+            "requirements": [{"itemId": "frogslime", "required": 2000,
+                              "collected": 0}],
+            "rewardClanXp": 3500, "completedAt": None}, quest_id="q1")
+        self.assertNotIn("generateClanQuest", self._actions(self._ctx(quest=quest)))
+
+    def test_a_plain_member_never_starts_the_quest(self):
+        self.assertNotIn("generateClanQuest",
+                         self._actions(self._ctx(role="member")))
+
+    def test_the_quest_stops_with_the_clan_feature(self):
+        cfg = self._Config(enabled=True, dry_run=False, clan_enabled=False)
+        self.assertNotIn("generateClanQuest",
+                         self._actions(self._ctx(), config=cfg))
