@@ -340,7 +340,7 @@ class Fleet:
             if not fresh.is_busy:
                 action_ready = bool(orchestrator.build_candidates(
                     fresh, self.market, holdings, task_status=task_status,
-                    inventory=inventory))
+                    inventory=inventory, wallet_id=wallet["id"]))
 
             return scheduler.next_wake_seconds(
                 self.config, wallet, fresh, rng=rng, action_ready=action_ready)

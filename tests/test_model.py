@@ -1,3 +1,4 @@
+import datetime as _dt
 import unittest
 
 from slcw.model import Activity, normalize_timestamp, parse_player
@@ -89,3 +90,51 @@ class PlayerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OpenEndedActivityTests(unittest.TestCase):
+    """A battle carries no endTime, so it can never become "expired".
+
+    Read live on 2026-08-21: the player document holds
+    {"type": "battle", "startTime": ..., "activityId": ..., "data": {...}} with no
+    endTime at all. The old rule — busy unless expired, expired only if end_ms is
+    set and past — made every such wallet permanently busy, which froze 14 of 25
+    accounts for five days with won battles left unclaimed.
+    """
+
+    def _battle(self):
+        return parse_player({
+            "level": 11, "activity": {
+                "type": "battle",
+                "activityId": "abc",
+                "startTime": "2026-08-16T11:20:50.319Z",
+                "data": {"battleId": "abc", "monsterId": "bigfrog_lvl1_1"},
+            },
+        })
+
+    def test_battle_without_end_time_is_not_expired(self):
+        self.assertFalse(self._battle().activity.is_expired)
+
+    def test_battle_without_end_time_is_settleable(self):
+        self.assertTrue(self._battle().activity.is_settleable)
+
+    def test_battle_without_end_time_does_not_hold_the_wallet_busy(self):
+        self.assertFalse(self._battle().is_busy)
+
+    def test_timed_activity_still_holds_the_wallet_busy_until_it_ends(self):
+        future = _dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(minutes=30)
+        state = parse_player({"level": 11, "activity": {
+            "type": "farming", "activityId": "f1",
+            "endTime": future.isoformat().replace("+00:00", "Z"),
+        }})
+        self.assertTrue(state.is_busy)
+        self.assertFalse(state.activity.is_settleable)
+
+    def test_timed_activity_becomes_settleable_once_its_clock_runs_out(self):
+        past = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(minutes=1)
+        state = parse_player({"level": 11, "activity": {
+            "type": "farming", "activityId": "f1",
+            "endTime": past.isoformat().replace("+00:00", "Z"),
+        }})
+        self.assertFalse(state.is_busy)
+        self.assertTrue(state.activity.is_settleable)

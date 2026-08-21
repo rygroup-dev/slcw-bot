@@ -9,6 +9,7 @@ from . import economy as econ
 from . import build as build_mod
 from . import farming, inventory as inv_mod, leveling, refining, world
 from .combat import CombatMemory, monster_level, select_monster
+from .quests import NewbieQuestMemory
 from .config import Config
 from .guardrails import GuardrailViolation
 from .transport import ApiError
@@ -101,6 +102,7 @@ class Orchestrator:
     api: object
     economy: econ.Economy = field(default_factory=econ.Economy)
     combat: CombatMemory = field(default_factory=CombatMemory)
+    quests: NewbieQuestMemory = field(default_factory=NewbieQuestMemory)
     rng: random.Random = field(default_factory=random.Random)
 
     def decide_and_act(self, wallet: dict, session, state, market=None,
@@ -111,7 +113,7 @@ class Orchestrator:
         try:
             candidates = self.build_candidates(
                 state, market, holdings, task_status=task_status,
-                inventory=inventory)
+                inventory=inventory, wallet_id=wallet["id"])
             decision.considered = candidates
             if not candidates:
                 decision.action = "idle"
@@ -128,6 +130,8 @@ class Orchestrator:
                 return decision
 
             decision.result = self.execute(session, chosen, state)
+            if chosen.action == "completeNewbieQuest":
+                self.quests.record_success(wallet["id"])
         except GuardrailViolation as exc:
             decision.action = "blocked"
             decision.error = str(exc)
@@ -138,15 +142,29 @@ class Orchestrator:
                 decision.result = {"already_done": str(exc)}
             else:
                 decision.error = f"{exc.status_code or 'ERROR'}: {exc}"
+            # Benign or not, a refused newbie quest is a refusal: the chain is
+            # item-gated, and retrying it every cycle is what starved the fleet
+            # of real actions while reporting zero errors.
+            if decision.action == "completeNewbieQuest":
+                self.quests.record_failure(wallet["id"], str(exc))
         return decision
 
     # --- candidate generation -------------------------------------------
     def build_candidates(self, state, market=None, holdings=None,
                          include_travel: bool = True, task_status=None,
-                         inventory=None) -> list:
+                         inventory=None, wallet_id: str | None = None) -> list:
         # Free value first: an expired activity is reward already earned, and
         # unclaimed level rewards cost nothing.
-        if state.activity is not None and state.activity.is_expired:
+        if state.activity is not None and state.activity.is_settleable:
+            # An open battle has to be fought out first: the server rejects
+            # finishActivity while the fight is unresolved.
+            battle_id = (state.activity.data or {}).get("battleId")
+            if state.activity.type == "battle" and battle_id:
+                monster_id = (state.activity.data or {}).get("monsterId", "")
+                return [econ.free_candidate(
+                    "resumeBattle",
+                    {"battleId": battle_id, "monsterId": monster_id},
+                    f"battle vs {monster_id or 'unknown'} left open, resuming")]
             return [econ.free_candidate(
                 "finishActivity", {},
                 f"{state.activity.type} finished, reward waiting")]
@@ -180,7 +198,11 @@ class Orchestrator:
 
         # A tutorial-chain quest that pays pure XP for a no-argument call —
         # free value, so it is taken before anything that costs a resource.
-        if state.newbie_quest < NEWBIE_QUEST_MAX_ATTEMPTS:
+        # `state.newbie_quest` reads a document field the server does not send,
+        # so it is always 0 and this cap alone never fires. The local memory is
+        # what actually bounds the chain — see slcw/quests.py.
+        if (state.newbie_quest < NEWBIE_QUEST_MAX_ATTEMPTS
+                and (wallet_id is None or self.quests.is_available(wallet_id))):
             return [econ.free_candidate(
                 "completeNewbieQuest", {},
                 f"newbie quest chain (step {state.newbie_quest})")]
@@ -347,7 +369,7 @@ class Orchestrator:
         if include_travel and self.config.auto_travel:
             local_best = max((c.score for c in profitable), default=0.0)
             relocation = self._travel_candidate(
-                state, market, holdings, local_best)
+                state, market, holdings, local_best, wallet_id=wallet_id)
             if relocation is not None:
                 profitable.append(relocation)
 
@@ -367,7 +389,8 @@ class Orchestrator:
         affordable = int(state.energy) // int(target.energy_cost)
         return max(1, min(affordable, MAX_PROJECTED_REPEATS))
 
-    def _travel_candidate(self, state, market, holdings, local_best: float):
+    def _travel_candidate(self, state, market, holdings, local_best: float,
+                          wallet_id: str | None = None):
         """Consider moving to wherever the next action is worth more.
 
         Gathering happens at farm zones and refining in city workshops, so a
@@ -393,7 +416,8 @@ class Orchestrator:
 
             elsewhere = replace(state, location_id=destination, activity=None)
             remote = self.build_candidates(
-                elsewhere, market, holdings, include_travel=False)
+                elsewhere, market, holdings, include_travel=False,
+                wallet_id=wallet_id)
             if not remote:
                 continue
 
@@ -532,6 +556,9 @@ class Orchestrator:
             unequip_result = self.api.unequip_item(session, candidate.params["slot"])
             equip_result = self.api.equip_item(session, candidate.params["instanceId"])
             return {"unequip": unequip_result, "equip": equip_result}
+        if action == "resumeBattle":
+            return self.resume_battle(session, candidate.params["battleId"],
+                                      candidate.params["monsterId"])
         if action == "battle":
             return self.run_battle(session, candidate.params["monsterId"])
         if action == "startTaskBattle":
@@ -549,7 +576,16 @@ class Orchestrator:
         battle_id = started.get("battleId")
         if not battle_id:
             raise ApiError("startBattle returned no battleId")
+        return self._fight_and_settle(session, battle_id, monster_id)
 
+    def _fight_and_settle(self, session, battle_id: str, monster_id: str) -> dict:
+        """Drive an already-open battle to its end, then settle it.
+
+        Split out of run_battle so a battle found open at startup can be
+        finished by exactly the same path that started it — the server refuses
+        finishActivity (HTTP 500) while a fight is still unresolved, so
+        resuming has to fight, not just settle.
+        """
         turns = 0
         damage_taken = 0
         finished = False
@@ -584,6 +620,15 @@ class Orchestrator:
             "reached_turn_cap": not finished,
             "reward": reward,
         }
+
+    def resume_battle(self, session, battle_id: str, monster_id: str) -> dict:
+        """Finish a battle that was left open by an earlier run.
+
+        A battle activity carries no endTime, so a process that died mid-fight
+        left the wallet holding one forever: never expired, therefore always
+        "busy", therefore never acted on again.
+        """
+        return self._fight_and_settle(session, battle_id, monster_id)
 
     def run_task_battle(self, session, monster_id: str) -> dict:
         """Fight the hunt task's assigned monster to a conclusion.

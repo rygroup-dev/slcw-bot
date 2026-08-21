@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from slcw import economy as econ
 from slcw.combat import CombatMemory
+from slcw.quests import NewbieQuestMemory
 from slcw.config import Config
 from slcw.market import build_snapshot
 from slcw.model import parse_player
@@ -20,9 +21,15 @@ class FakeApi:
         self.calls = []
         self.turn_script = turn_script or []
         self.turn_index = 0
+        # (action, status_code, message) to reject, so a test can reproduce a
+        # server refusal such as completeNewbieQuest's "Insufficient items".
+        self.fail_with = None
 
     def _record(self, name, **kwargs):
         self.calls.append((name, kwargs))
+        if self.fail_with and self.fail_with[0] == name:
+            _, status_code, message = self.fail_with
+            raise ApiError(message, status_code=status_code)
         return {"success": True}
 
     def finish_activity(self, session):
@@ -87,6 +94,7 @@ def make(config=None, api=None):
         config=config or Config(enabled=True, dry_run=False),
         api=api or FakeApi(),
         combat=CombatMemory(path=Path(tmp) / "combat.json"),
+        quests=NewbieQuestMemory(path=Path(tmp) / "newbie_quests.json"),
     )
 
 
@@ -307,3 +315,113 @@ class RationaleTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StuckBattleRecoveryTests(unittest.TestCase):
+    """A battle left open server-side must be settled, not waited on."""
+
+    def _battle_state(self):
+        return parse_player({
+            "level": 11, "energy": 80, "maxEnergy": 100,
+            "currentHealth": 130, "currentMana": 130,
+            "currentLocationId": "farm_3",
+            "attributes": {"wisdom": 3, "vitality": 3},
+            "claimedInitialRewardsV2": list(range(1, 16)),
+            "activity": {
+                "type": "battle", "activityId": "abc",
+                "startTime": "2026-08-16T11:20:50.319Z",
+                "data": {"battleId": "abc", "monsterId": "bigfrog_lvl1_1"},
+            },
+        })
+
+    def test_open_battle_is_resumed_instead_of_treated_as_in_progress(self):
+        api = FakeApi(turn_script=[{"turnResult": {}, "isOver": True}])
+        decision = make(api=api).decide_and_act({"id": "w1"}, None, self._battle_state())
+        self.assertEqual(decision.action, "resumeBattle")
+
+    def test_the_wallet_is_not_reported_idle_while_a_battle_sits_unclaimed(self):
+        api = FakeApi(turn_script=[{"turnResult": {}, "isOver": True}])
+        decision = make(api=api).decide_and_act({"id": "w1"}, None, self._battle_state())
+        self.assertNotEqual(decision.action, "idle")
+
+    def test_resuming_fights_the_open_battle_out_before_settling_it(self):
+        """finishActivity alone returns HTTP 500 while the fight is unresolved.
+
+        Measured live on wallet-13: its battle was open at round 12, blind
+        settling was refused, and one processTurn ended it — after which the
+        same finishActivity paid out 42 xp and 2 livingwood.
+        """
+        api = FakeApi(turn_script=[{"turnResult": {}, "isOver": True}])
+        make(api=api).decide_and_act({"id": "w1"}, None, self._battle_state())
+        names = [c[0] for c in api.calls]
+        self.assertIn("processTurn", names)
+        self.assertIn("finishActivity", names)
+        self.assertLess(names.index("processTurn"), names.index("finishActivity"))
+
+    def test_resuming_does_not_start_a_second_battle(self):
+        api = FakeApi(turn_script=[{"turnResult": {}, "isOver": True}])
+        make(api=api).decide_and_act({"id": "w1"}, None, self._battle_state())
+        self.assertNotIn("startBattle", [c[0] for c in api.calls])
+
+    def test_an_expired_timed_activity_is_still_settled_directly(self):
+        api = FakeApi()
+        state = parse_player({
+            "level": 11, "energy": 80, "maxEnergy": 100,
+            "currentHealth": 130, "currentMana": 130,
+            "currentLocationId": "farm_3",
+            "attributes": {"wisdom": 3, "vitality": 3},
+            "claimedInitialRewardsV2": list(range(1, 16)),
+            "activity": {"type": "farming", "activityId": "f1",
+                         "endTime": "2020-01-01T00:00:00Z"},
+        })
+        decision = make(api=api).decide_and_act({"id": "w1"}, None, state)
+        self.assertEqual(decision.action, "finishActivity")
+        self.assertNotIn("processTurn", [c[0] for c in api.calls])
+
+
+class NewbieQuestRetryTests(unittest.TestCase):
+    """The chain must not be re-picked after the server has refused it."""
+
+    def _fresh_state(self):
+        return state_of(newbieQuest=0)
+
+    def test_a_refused_chain_is_not_retried_on_the_next_cycle(self):
+        api = FakeApi()
+        api.fail_with = ("completeNewbieQuest", "FAILED_PRECONDITION",
+                         "Insufficient items: 0/1")
+        orchestrator = make(api=api)
+        first = orchestrator.decide_and_act({"id": "w1"}, None, self._fresh_state())
+        self.assertEqual(first.action, "completeNewbieQuest")
+
+        second = orchestrator.decide_and_act({"id": "w1"}, None, self._fresh_state())
+        self.assertNotEqual(second.action, "completeNewbieQuest")
+
+    def test_a_benign_refusal_still_parks_the_chain(self):
+        api = FakeApi()
+        api.fail_with = ("completeNewbieQuest", "FAILED_PRECONDITION",
+                         "Insufficient items: 0/1")
+        orchestrator = make(api=api)
+        orchestrator.decide_and_act({"id": "w1"}, None, self._fresh_state())
+        self.assertFalse(orchestrator.quests.is_available("w1"))
+
+    def test_a_refusal_for_one_wallet_does_not_park_another(self):
+        api = FakeApi()
+        api.fail_with = ("completeNewbieQuest", "FAILED_PRECONDITION",
+                         "Insufficient items: 0/1")
+        orchestrator = make(api=api)
+        orchestrator.decide_and_act({"id": "w1"}, None, self._fresh_state())
+        self.assertTrue(orchestrator.quests.is_available("w2"))
+
+    def test_a_parked_chain_frees_the_wallet_for_real_work(self):
+        api = FakeApi()
+        api.fail_with = ("completeNewbieQuest", "FAILED_PRECONDITION",
+                         "Insufficient items: 0/1")
+        orchestrator = make(api=api)
+        orchestrator.decide_and_act({"id": "w1"}, None, self._fresh_state())
+        second = orchestrator.decide_and_act({"id": "w1"}, None, self._fresh_state())
+        self.assertNotIn(second.action, ("idle", "completeNewbieQuest"))
+
+    def test_a_successful_step_leaves_the_chain_open(self):
+        orchestrator = make(api=FakeApi())
+        orchestrator.decide_and_act({"id": "w1"}, None, self._fresh_state())
+        self.assertTrue(orchestrator.quests.is_available("w1"))

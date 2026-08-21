@@ -82,6 +82,28 @@ class Activity:
     def is_expired(self) -> bool:
         return bool(self.end_ms) and self.end_ms <= _now_ms()
 
+    @property
+    def is_open_ended(self) -> bool:
+        """True for an activity the server never gave an end time.
+
+        A battle is the live example: its document is {type, activityId,
+        startTime, data} with no endTime, because it ends when the turn loop
+        ends, not on a clock.
+        """
+        return not self.end_ms
+
+    @property
+    def is_settleable(self) -> bool:
+        """True when finishActivity is the right next call.
+
+        Timed activities become settleable when their clock runs out. Open-ended
+        ones are settleable on sight — waiting for `is_expired` to turn true on
+        an activity with no end time waits forever, which is exactly what pinned
+        wallets to "battle running, 0m left" until finishActivity was called by
+        hand.
+        """
+        return self.is_open_ended or self.is_expired
+
     def seconds_remaining(self) -> float:
         if not self.end_ms:
             return 0.0
@@ -136,7 +158,13 @@ class PlayerState:
 
     @property
     def is_busy(self) -> bool:
-        return self.activity is not None and not self.activity.is_expired
+        """Busy means "nothing to do here yet", not merely "has an activity".
+
+        An activity that is ready to be settled is work waiting, not work in
+        progress, so it must not read as busy — otherwise the settle branch that
+        would clear it is never reached.
+        """
+        return self.activity is not None and not self.activity.is_settleable
 
     FREE_REFILLS_PER_DAY = 3
 
