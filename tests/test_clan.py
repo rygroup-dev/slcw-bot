@@ -862,3 +862,73 @@ class ClanReachableUnderTasksTests(unittest.TestCase):
 
     def test_the_task_chain_still_runs_when_no_clan_action_is_due(self):
         self.assertEqual(self._actions(self._ctx(), gold=500)[0], "startTaskBattle")
+
+
+class ApplicationQueryTests(unittest.TestCase):
+    """Listing every application in the game returns whatever the rules allow.
+
+    Measured live on 2026-08-21, minutes after RY Group was founded: two wallets
+    had applied, an unfiltered scan of `clan_applications` returned one of them,
+    and the same query constrained to our clanId returned both. Firestore will
+    not serve an unconstrained listing of a collection whose rules are per-clan,
+    so the leader was reading an arbitrary subset of its own queue — and once the
+    game has more than 200 applications outstanding, none of ours at all.
+    """
+
+    class FakeTransport:
+        def __init__(self, rows):
+            self.rows = rows
+            self.bodies = []
+
+        def request(self, method, url, json_body=None, headers=None):
+            self.bodies.append(json_body)
+            return self.rows
+
+    def _rows(self, *docs):
+        return [{"document": {"name": f"projects/p/documents/clan_applications/a{i}",
+                              "fields": {k: {"stringValue": str(v)}
+                                         for k, v in doc.items()}}}
+                for i, doc in enumerate(docs)]
+
+    def _api(self, rows):
+        from slcw.api import GameApi
+        transport = self.FakeTransport(rows)
+        return GameApi(transport), transport
+
+    class _Session:
+        id_token = "t"
+
+    def test_the_query_is_constrained_to_our_clan(self):
+        api, transport = self._api(self._rows({"clanId": "c1"}))
+        api.get_clan_applications(self._Session(), "c1")
+        where = transport.bodies[0]["structuredQuery"].get("where") or {}
+        field = where.get("fieldFilter") or {}
+        self.assertEqual(field.get("field", {}).get("fieldPath"), "clanId")
+        self.assertEqual(field.get("value", {}).get("stringValue"), "c1")
+
+    def test_the_application_id_is_attached(self):
+        api, _ = self._api(self._rows({"clanId": "c1"}))
+        rows = api.get_clan_applications(self._Session(), "c1")
+        self.assertEqual(rows[0]["applicationId"], "a0")
+
+
+class ApplicantLevelTests(unittest.TestCase):
+    """An application carries the applicant's level; use it."""
+
+    APPS = [
+        {"applicationId": "a1", "clanId": "c1", "userId": "solana:A",
+         "status": "pending", "playerLevel": 4},
+        {"applicationId": "a2", "clanId": "c1", "userId": "solana:B",
+         "status": "pending", "playerLevel": 15},
+    ]
+
+    def test_the_document_s_own_level_orders_the_queue(self):
+        ranked = clan.acceptable_applications(
+            self.APPS, "c1", {"solana:A", "solana:B"})
+        self.assertEqual([a["applicationId"] for a in ranked], ["a2", "a1"])
+
+    def test_an_explicit_level_map_still_wins(self):
+        ranked = clan.acceptable_applications(
+            self.APPS, "c1", {"solana:A", "solana:B"},
+            levels={"solana:A": 99, "solana:B": 1})
+        self.assertEqual([a["applicationId"] for a in ranked], ["a1", "a2"])

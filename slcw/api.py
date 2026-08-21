@@ -205,11 +205,24 @@ class GameApi:
         return self._call(session, "generateClanQuest", {"clanId": clan_id})
 
     def get_clan_applications(self, session, clan_id: str) -> list[dict]:
-        """Pending join requests for a clan, with their document ids attached."""
+        """Pending join requests for a clan, with their document ids attached.
+
+        The clanId filter is not an optimisation. `clan_applications` is readable
+        per clan, and Firestore answers an unconstrained listing with whatever
+        the rules happen to allow rather than an error — measured live on
+        2026-08-21, an unfiltered scan returned one of the two applications that
+        existed and the filtered one returned both. Scanning the whole collection
+        would also start truncating other clans' rows into our 200 as the game
+        grows, exactly the way a limit-500 query saw 500 of 5,865 market orders.
+        """
         payload = self.transport.request(
             "POST", f"{FIRESTORE_BASE}:runQuery",
             json_body={"structuredQuery": {
-                "from": [{"collectionId": "clan_applications"}], "limit": 200}},
+                "from": [{"collectionId": "clan_applications"}],
+                "where": {"fieldFilter": {
+                    "field": {"fieldPath": "clanId"}, "op": "EQUAL",
+                    "value": {"stringValue": clan_id}}},
+                "limit": 200}},
             headers={"Authorization": f"Bearer {session.id_token}"})
         rows = payload if isinstance(payload, list) else []
         out = []

@@ -414,6 +414,14 @@ def acceptable_applications(applications: list, clan_id: str,
         if str(app.get("userId") or "") not in fleet_uids:
             continue
         out.append(app)
-    if levels:
-        out.sort(key=lambda a: -int(levels.get(str(a.get("userId") or ""), 0) or 0))
+    # The application document carries the applicant's level itself, which is
+    # what the leader wants when the queue is longer than the free seats. An
+    # explicit map still wins: it is this fleet's own reading of its own wallets.
+    def _level(app):
+        uid = str(app.get("userId") or "")
+        if levels and uid in levels:
+            return int(levels[uid] or 0)
+        return int(app.get("playerLevel", 0) or 0)
+
+    out.sort(key=lambda a: -_level(a))
     return out
