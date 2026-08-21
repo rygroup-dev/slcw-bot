@@ -109,6 +109,13 @@ say "Dependencies installed:"
 
 chmod +x slcwctl install.sh 2>/dev/null || true
 
+# slcwctl ships with the default install path in its shebang, so running
+# ./slcwctl directly from an SLCW_HOME elsewhere would reach for a venv that is
+# not there. Point it at the interpreter this install actually built. Every
+# call from this script goes through .venv/bin/python explicitly, so this only
+# affects a human typing ./slcwctl.
+sed -i "1s|^#!.*|#!$INSTALL_DIR/.venv/bin/python|" slcwctl 2>/dev/null || true
+
 # --- update path: no wizard, just restart --------------------------------
 if [ "$CONFIGURED" -eq 1 ]; then
   echo

@@ -369,6 +369,24 @@ front of citizenship quests — was confirmed to cost diamonds, not gold, on a r
 account with plenty of gold and zero diamonds. Both stay out of the decision loop
 for exactly that reason, recorded in `guardrails.py`.
 
+#### Live systems this engine does not use yet
+
+Swept against the deployed functions on 2026-08-21, so this is what the server
+answers to today rather than what a bundle implies:
+
+- **Clans** are real and unwired. `searchClans` and `getClanMembers` both return
+  data, `createClan` and `leaveClan` exist, and `applyClan` answers "Clan not
+  found" for a bad id — so that, not `joinClan`, is the join path. Clans carry a
+  gold treasury, a level, and per-member `dkp`; the top ones are level 20-30 with
+  members around level 50. Nothing here is scored or called yet.
+- **Expeditions** appear in the frontend bundle (`startExpedition`,
+  `finishExpedition`, `claimExpeditionRewards`) and every one of them 404s. The
+  feature is built client-side but not deployed, so there is nothing to wire.
+- **Referrals** work: `handleReferral` accepts a referral id.
+
+The hunt task chain, by contrast, is fully wired and is currently the engine's
+only gold stream — `claimTaskReward` pays 1,000 gold per completed task.
+
 #### A benign rejection is not always a no-op
 
 `ALREADY_EXISTS` and `FAILED_PRECONDITION` mean "the server already did this", so
