@@ -7,6 +7,7 @@ from unittest.mock import patch
 from slcw import economy as econ
 from slcw.combat import CombatMemory
 from slcw.quests import NewbieQuestMemory
+from slcw.rejections import RejectionMemory
 from slcw.config import Config
 from slcw.market import build_snapshot
 from slcw.model import parse_player
@@ -39,6 +40,10 @@ class FakeApi:
     def claim_initial_reward(self, session, level):
         return self._record("claimInitialReward", level=level)
 
+    def open_chests(self, session, chest_template_id, quantity=1):
+        return self._record("openChests", chestTemplateId=chest_template_id,
+                            quantity=quantity)
+
     def start_relax(self, session):
         return self._record("startRelax")
 
@@ -64,6 +69,9 @@ class FakeApi:
 
     def process_turn(self, session, battle_id, attack, defense):
         self.calls.append(("processTurn", {"attack": attack, "defense": defense}))
+        if self.fail_with and self.fail_with[0] == "processTurn":
+            _, status_code, message = self.fail_with
+            raise ApiError(message, status_code=status_code)
         if self.turn_index < len(self.turn_script):
             outcome = self.turn_script[self.turn_index]
             self.turn_index += 1
@@ -95,6 +103,7 @@ def make(config=None, api=None):
         api=api or FakeApi(),
         combat=CombatMemory(path=Path(tmp) / "combat.json"),
         quests=NewbieQuestMemory(path=Path(tmp) / "newbie_quests.json"),
+        rejections=RejectionMemory(path=Path(tmp) / "rejections.json"),
     )
 
 
@@ -311,6 +320,122 @@ class RationaleTests(unittest.TestCase):
         lines = decision.rationale_lines()
         self.assertTrue(lines[0].startswith("Chose:"))
         self.assertGreaterEqual(len(lines), 2)
+
+
+class RejectionParkingTests(unittest.TestCase):
+    """A free action the server keeps refusing must stop being chosen.
+
+    FAILED_PRECONDITION is benign, and the free-value branches return early, so
+    without this a refused action is re-picked every cycle forever — the wallet
+    goes silent while the fleet view still shows zero errors.
+    """
+
+    def _state(self):
+        return parse_player({
+            "level": 6, "grade": 1, "energy": 80, "maxEnergy": 100,
+            "balance": 5000, "currentHealth": 130, "currentMana": 130,
+            "currentLocationId": "city_2",
+            "attributes": {"vitality": 3, "wisdom": 3},
+            "claimedInitialRewardsV2": list(range(1, 7)), "newbieQuest": 999,
+            "activity": None, "freeEnergyRefillsToday": 3,
+            "lastFreeEnergyRefillDate": "2099-01-01"})
+
+    def _chest_inventory(self):
+        from slcw import inventory as inv
+        return inv.parse_inventory({"maxSlots": 20, "slots": [
+            {"slotIndex": 0, "templateId": "small_equip_chest",
+             "quantity": 3, "instanceId": None}]})
+
+    def test_a_refused_free_action_is_not_chosen_again(self):
+        api = FakeApi()
+        api.fail_with = ("openChests", "FAILED_PRECONDITION",
+                         "Not enough space in inventory")
+        orchestrator = make(api=api)
+        inventory = self._chest_inventory()
+
+        first = orchestrator.decide_and_act(
+            {"id": "w1"}, None, self._state(), None, None, None, inventory)
+        self.assertEqual(first.action, "openChests")
+        self.assertIn("already_done", first.result)
+
+        second = orchestrator.decide_and_act(
+            {"id": "w1"}, None, self._state(), None, None, None, inventory)
+        self.assertNotEqual(second.action, "openChests")
+
+    def test_the_park_is_per_wallet(self):
+        api = FakeApi()
+        api.fail_with = ("openChests", "FAILED_PRECONDITION", "Not enough space")
+        orchestrator = make(api=api)
+        inventory = self._chest_inventory()
+        orchestrator.decide_and_act(
+            {"id": "w1"}, None, self._state(), None, None, None, inventory)
+        second = orchestrator.decide_and_act(
+            {"id": "w2"}, None, self._state(), None, None, None, inventory)
+        self.assertEqual(second.action, "openChests")
+
+    def test_a_success_leaves_nothing_parked(self):
+        orchestrator = make(api=FakeApi())
+        inventory = self._chest_inventory()
+        first = orchestrator.decide_and_act(
+            {"id": "w1"}, None, self._state(), None, None, None, inventory)
+        self.assertEqual(first.action, "openChests")
+        self.assertFalse(orchestrator.rejections.parked_actions("w1"))
+
+    def test_an_open_battle_is_never_parked(self):
+        """Parking resumeBattle would leave the wallet busy forever."""
+        api = FakeApi()
+        orchestrator = make(api=api)
+        orchestrator.rejections.park(
+            "w1", "resumeBattle", {"battleId": "b1", "monsterId": "m1"}, "nope")
+        self.assertFalse(orchestrator.rejections.parked_actions("w1"))
+
+
+@patch("slcw.orchestrator.time.sleep", lambda *_: None)
+class ResolvedBattleTests(unittest.TestCase):
+    """A battle the server has already decided still has to be settled.
+
+    Measured live on 2026-08-21: wallet-13 held an open battle activity for nine
+    and a half hours. processTurn answered FAILED_PRECONDITION "Battle is not
+    active" — the fight was won, only the activity was never closed. That status
+    is benign, so the exception left the turn loop before finishActivity, the
+    reward stayed unclaimed, the activity stayed open, and the wallet read as
+    busy on every later cycle while reporting zero errors.
+    """
+
+    def _api(self):
+        api = FakeApi()
+        api.fail_with = ("processTurn", "FAILED_PRECONDITION",
+                         "Battle is not active")
+        return api
+
+    def test_a_finished_fight_is_settled_rather_than_re_fought(self):
+        api = self._api()
+        orchestrator = make(api=api)
+        state = state_of(activity={"type": "battle", "startTime": {"seconds": 1},
+                                   "data": {"battleId": "b1",
+                                            "monsterId": "antimage_lvl10_3"}})
+        decision = orchestrator.decide_and_act({"id": "w1"}, None, state)
+        self.assertEqual(decision.action, "resumeBattle")
+        self.assertEqual(decision.error, "")
+        self.assertIn("finishActivity", [name for name, _ in api.calls])
+
+    def test_a_real_failure_still_surfaces(self):
+        """Only 'already resolved' is swallowed; a broken turn is still an error."""
+        api = FakeApi()
+        api.fail_with = ("processTurn", "INVALID_ARGUMENT",
+                         "Invalid attack or defense zone")
+        orchestrator = make(api=api)
+        state = state_of(activity={"type": "battle", "startTime": {"seconds": 1},
+                                   "data": {"battleId": "b1", "monsterId": "m1"}})
+        decision = orchestrator.decide_and_act({"id": "w1"}, None, state)
+        self.assertIn("INVALID_ARGUMENT", decision.error)
+
+    def test_a_task_battle_is_settled_too(self):
+        api = self._api()
+        orchestrator = make(api=api)
+        result = orchestrator.run_task_battle(None, "antimage_lvl10_3")
+        self.assertIn("finishActivity", [name for name, _ in api.calls])
+        self.assertTrue(result)
 
 
 if __name__ == "__main__":

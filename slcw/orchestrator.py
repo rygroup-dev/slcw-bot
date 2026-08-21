@@ -11,6 +11,7 @@ from . import farming, inventory as inv_mod, leveling, refining, world
 from .combat import CombatMemory, monster_level, select_monster
 from . import clan as clan_mod
 from .quests import NewbieQuestMemory
+from .rejections import RejectionMemory
 from .config import Config
 from .guardrails import GuardrailViolation
 from .transport import ApiError
@@ -104,6 +105,7 @@ class Orchestrator:
     economy: econ.Economy = field(default_factory=econ.Economy)
     combat: CombatMemory = field(default_factory=CombatMemory)
     quests: NewbieQuestMemory = field(default_factory=NewbieQuestMemory)
+    rejections: RejectionMemory = field(default_factory=RejectionMemory)
     rng: random.Random = field(default_factory=random.Random)
 
     def decide_and_act(self, wallet: dict, session, state, market=None,
@@ -132,6 +134,7 @@ class Orchestrator:
                 return decision
 
             decision.result = self.execute(session, chosen, state)
+            self.rejections.clear(wallet["id"], chosen.action, chosen.params)
             if chosen.action == "completeNewbieQuest":
                 self.quests.record_success(wallet["id"])
         except GuardrailViolation as exc:
@@ -144,12 +147,24 @@ class Orchestrator:
                 decision.result = {"already_done": str(exc)}
             else:
                 decision.error = f"{exc.status_code or 'ERROR'}: {exc}"
+            # Whether or not it counts as an error, the server said no. Park the
+            # exact call so the next cycle picks something else: a free action
+            # that is refused every time is how a wallet goes quiet while the
+            # dashboard still reads zero errors.
+            self.rejections.park(
+                wallet["id"], decision.action, decision.params, str(exc))
             # Benign or not, a refused newbie quest is a refusal: the chain is
             # item-gated, and retrying it every cycle is what starved the fleet
             # of real actions while reporting zero errors.
             if decision.action == "completeNewbieQuest":
                 self.quests.record_failure(wallet["id"], str(exc))
         return decision
+
+    def _parked(self, wallet_id, action: str, params: dict) -> bool:
+        """Whether this exact call was refused recently and should be skipped."""
+        if not wallet_id:
+            return False
+        return self.rejections.is_parked(wallet_id, action, params)
 
     # --- candidate generation -------------------------------------------
     def build_candidates(self, state, market=None, holdings=None,
@@ -219,21 +234,28 @@ class Orchestrator:
         # Chests are free loot sitting in a slot, and gear in an empty slot is
         # pure gain. Both cost nothing and neither can be undone badly.
         if inventory is not None:
+            # Each chest pays out into a fresh slot, so a batch bigger than the
+            # free space is refused with FAILED_PRECONDITION "Not enough space
+            # in inventory" — benign, therefore a silent forever-loop.
             chests = inventory.chests()
-            if chests:
+            batch = min(MAX_CHESTS_PER_OPEN, max(0, inventory.free_slots))
+            if chests and batch > 0:
                 chest = chests[0]
-                return [econ.free_candidate(
-                    "openChests",
-                    {"chestTemplateId": chest.template_id,
-                     "quantity": min(chest.quantity, MAX_CHESTS_PER_OPEN)},
-                    f"{chest.quantity}× {chest.template_id} unopened")]
+                params = {"chestTemplateId": chest.template_id,
+                          "quantity": min(chest.quantity, batch)}
+                if not self._parked(wallet_id, "openChests", params):
+                    return [econ.free_candidate(
+                        "openChests", params,
+                        f"{chest.quantity}× {chest.template_id} unopened")]
 
-            equip = inv_mod.next_equip(inventory, state.equipment)
+            equip = inv_mod.next_equip(inventory, state.equipment, state.grade)
             if equip is not None:
                 if not equip.is_upgrade:
-                    return [econ.free_candidate(
-                        "equipItem", {"instanceId": equip.instance_id},
-                        f"{equip.template_id} into empty {equip.slot} slot")]
+                    params = {"instanceId": equip.instance_id}
+                    if not self._parked(wallet_id, "equipItem", params):
+                        return [econ.free_candidate(
+                            "equipItem", params,
+                            f"{equip.template_id} into empty {equip.slot} slot")]
                 # A strictly higher tier in an occupied slot is a pure gain
                 # too, but the game needs the worn piece removed first —
                 # unequipItem, then equipItem, as one atomic decision.
@@ -770,7 +792,18 @@ class Orchestrator:
         for _ in range(self.config.battle_max_turns):
             time.sleep(self.rng.uniform(1.8, 3.6))
             attack, defense = self.combat.choose_zones(monster_id, self.rng)
-            outcome = self.api.process_turn(session, battle_id, attack, defense)
+            try:
+                outcome = self.api.process_turn(session, battle_id, attack, defense)
+            except ApiError as exc:
+                # "Battle is not active": the server has already decided this
+                # fight and is only waiting for the activity to be closed. That
+                # status is benign, so letting it propagate skipped the settle
+                # below — which left one wallet holding a won battle, and
+                # therefore reading as busy, for nine and a half hours.
+                if not exc.is_benign:
+                    raise
+                finished = True
+                break
             turns += 1
             turn_result = outcome.get("turnResult") or {}
             if turn_result:
@@ -812,43 +845,12 @@ class Orchestrator:
         """Fight the hunt task's assigned monster to a conclusion.
 
         startTaskBattle takes no arguments — the server already knows which
-        monster the active task points at — but the turn loop that follows is
-        the same processTurn/finishActivity cycle as a normal battle, so this
-        mirrors run_battle rather than duplicating it blind.
+        monster the active task points at — but everything after that is the
+        same processTurn/finishActivity cycle as a normal battle, so it shares
+        the one implementation rather than keeping a second copy of it.
         """
         started = self.api.start_task_battle(session)
         battle_id = started.get("battleId")
         if not battle_id:
             raise ApiError("startTaskBattle returned no battleId")
-
-        turns = 0
-        damage_taken = 0
-        finished = False
-        for _ in range(self.config.battle_max_turns):
-            time.sleep(self.rng.uniform(1.8, 3.6))
-            attack, defense = self.combat.choose_zones(monster_id, self.rng)
-            outcome = self.api.process_turn(session, battle_id, attack, defense)
-            turns += 1
-            turn_result = outcome.get("turnResult") or {}
-            if turn_result:
-                self.combat.observe(monster_id, turn_result)
-                incoming = turn_result.get("monster") or {}
-                if incoming.get("type") in ("hit", "crit"):
-                    damage_taken += int(incoming.get("damage", 0) or 0)
-            if outcome.get("isOver"):
-                finished = True
-                break
-
-        time.sleep(self.rng.uniform(1.5, 3.0))
-        reward = self.api.finish_activity(session)
-
-        summary = (reward or {}).get("rewardSummary") or {}
-        self.combat.record_battle(monster_id, summary, turns, damage_taken)
-        self.combat.save()
-        return {
-            "battleId": battle_id,
-            "monsterId": monster_id,
-            "turns": turns,
-            "reached_turn_cap": not finished,
-            "reward": reward,
-        }
+        return self._fight_and_settle(session, battle_id, monster_id)

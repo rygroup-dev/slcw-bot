@@ -6,7 +6,7 @@
 
 [![tests](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml/badge.svg)](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml)
 [![python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab?logo=python&logoColor=white)](https://www.python.org/)
-[![tests](https://img.shields.io/badge/tests-701%20passing-4c1)](tests/)
+[![tests](https://img.shields.io/badge/tests-737%20passing-4c1)](tests/)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 Every action is priced in gold-per-hour before it runs.
@@ -443,6 +443,28 @@ The rule this repo now follows: an action that can be re-picked must record its 
 refusal somewhere, benign or not, and consult that record before being offered
 again. Health is measured by what the ledger records, not by what the error counter
 does not.
+
+That rule is now enforced generally rather than per-action. `slcw/rejections.py`
+parks the exact call — action *and* arguments — that the server refused, for an
+hour, and `build_candidates` skips a parked call. Battles are deliberately not
+parkable: an open fight has to be resolved before anything else can be chosen at
+all, so parking `resumeBattle` would freeze the wallet harder than the bug it
+guards against.
+
+Three real instances of the pattern were measured on 2026-08-21, each of them a
+wallet that had been "healthy with zero errors" for hours while producing nothing:
+
+| Call | Refusal | Fix |
+| --- | --- | --- |
+| `equipItem` | `Your grade (1) is too low for this item (Grade 2)` | a piece needs `grade >= tier`, so gear the character cannot wear is never proposed |
+| `openChests` | `Not enough space in inventory` | the batch is capped at the free slot count, and skipped entirely at zero |
+| `processTurn` | `Battle is not active` | the fight was already won; the turn loop now breaks and *settles* instead of letting the benign error skip `finishActivity` |
+
+The last one is the sharpest illustration of why benign-means-no-op is wrong. The
+battle had been decided in the wallet's favour — 40 xp and two runeshards were
+sitting behind `finishActivity` — but the exception left the turn loop before the
+settle step, so the activity stayed open, the wallet read as busy on every later
+cycle, and it did nothing at all for nine and a half hours.
 
 **Hunting** is a third: a passive, turn-free alternative to battle, measured live
 at 11 xp + 1× spiderfang for 3 gold and 3 energy against a tier-1 monster,

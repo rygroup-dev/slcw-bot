@@ -13,6 +13,16 @@ def document(*slots, max_slots=20):
         for i, (t, q, iid) in enumerate(slots)]}
 
 
+def chest_state():
+    return parse_player({
+        "level": 6, "grade": 1, "energy": 80, "maxEnergy": 100, "balance": 5000,
+        "currentHealth": 130, "currentMana": 130, "currentLocationId": "city_2",
+        "attributes": {"vitality": 3, "wisdom": 3},
+        "claimedInitialRewardsV2": list(range(1, 7)), "newbieQuest": 999,
+        "activity": None, "freeEnergyRefillsToday": 3,
+        "lastFreeEnergyRefillDate": "2099-01-01"})
+
+
 class InventoryParsingTests(unittest.TestCase):
     def test_parses_the_live_slot_shape(self):
         parsed = inv.parse_inventory(document(
@@ -86,6 +96,29 @@ class ChestTests(unittest.TestCase):
         self.assertEqual(candidates[0].params["quantity"], MAX_CHESTS_PER_OPEN)
 
 
+    def test_a_full_inventory_does_not_open_chests(self):
+        """Measured live: openChests answers FAILED_PRECONDITION "Not enough
+        space in inventory", which is benign — so the wallet retries forever."""
+        orchestrator = make(config=Config(enabled=True, dry_run=True), api=FakeApi())
+        parsed = inv.parse_inventory(document(
+            *[("copper_ore", 1, None)] * 9, ("small_equip_chest", 4, None),
+            max_slots=10))
+        candidates = orchestrator.build_candidates(
+            chest_state(), inventory=parsed, wallet_id="w1")
+        self.assertNotEqual(
+            [c.action for c in candidates][:1], ["openChests"])
+
+    def test_the_batch_never_exceeds_the_free_slots(self):
+        orchestrator = make(config=Config(enabled=True, dry_run=True), api=FakeApi())
+        parsed = inv.parse_inventory(document(
+            *[("copper_ore", 1, None)] * 7, ("small_equip_chest", 9, None),
+            max_slots=10))
+        candidates = orchestrator.build_candidates(
+            chest_state(), inventory=parsed, wallet_id="w1")
+        self.assertEqual(candidates[0].action, "openChests")
+        self.assertEqual(candidates[0].params["quantity"], 2)
+
+
 class EquipTests(unittest.TestCase):
     def test_item_slots_are_known(self):
         self.assertEqual(inv.slot_of("two_handed_sword_t1"), "two_hand_weapon")
@@ -137,6 +170,28 @@ class EquipTests(unittest.TestCase):
         worn = {"head": {"templateId": "plate_helmet_t1"}}
         self.assertEqual(inv.next_equip(parsed, worn).instance_id, "free")
 
+    def test_gear_above_the_players_grade_is_skipped(self):
+        """Measured live: equipItem on a t2 piece at grade 1 answers
+        FAILED_PRECONDITION "Your grade (1) is too low for this item (Grade 2)".
+        That reads as benign, so proposing it loops the wallet forever."""
+        parsed = inv.parse_inventory(document(("plate_boots_t2", 1, "inst-2")))
+        self.assertIsNone(inv.next_equip(parsed, {}, grade=1))
+
+    def test_gear_at_the_players_grade_is_worn(self):
+        parsed = inv.parse_inventory(document(("plate_boots_t2", 1, "inst-2")))
+        self.assertEqual(inv.next_equip(parsed, {}, grade=2).instance_id, "inst-2")
+
+    def test_a_wearable_piece_is_taken_when_a_better_one_is_locked(self):
+        parsed = inv.parse_inventory(document(
+            ("plate_boots_t2", 1, "locked"), ("plate_helmet_t1", 1, "wearable")))
+        self.assertEqual(
+            inv.next_equip(parsed, {}, grade=1).instance_id, "wearable")
+
+    def test_an_upgrade_above_the_grade_is_skipped_too(self):
+        parsed = inv.parse_inventory(document(("plate_helmet_t2", 1, "up")))
+        worn = {"head": {"templateId": "plate_helmet_t1"}}
+        self.assertIsNone(inv.next_equip(parsed, worn, grade=1))
+
     def test_stackable_material_is_never_equipped(self):
         parsed = inv.parse_inventory(document(("copper_ore", 99, None)))
         self.assertIsNone(inv.next_equip(parsed, {}))
@@ -162,7 +217,7 @@ class EquipTests(unittest.TestCase):
         """A strictly higher tier in an occupied slot is still a pure gain."""
         orchestrator = make(config=Config(enabled=True, dry_run=True), api=FakeApi())
         state = parse_player({
-            "level": 6, "grade": 1, "energy": 80, "maxEnergy": 100, "balance": 5000,
+            "level": 6, "grade": 5, "energy": 80, "maxEnergy": 100, "balance": 5000,
             "currentHealth": 130, "currentMana": 130, "currentLocationId": "city_2",
             "attributes": {"vitality": 3, "wisdom": 3},
             "equipment": {slot: {"templateId": f"plate_helmet_t1"}
@@ -182,7 +237,7 @@ class EquipTests(unittest.TestCase):
         api.equip_item = lambda s, i: calls.append(("equip", i)) or {"success": True}
         orchestrator = make(config=Config(enabled=True, dry_run=False), api=api)
         state = parse_player({
-            "level": 6, "grade": 1, "energy": 80, "maxEnergy": 100, "balance": 5000,
+            "level": 6, "grade": 5, "energy": 80, "maxEnergy": 100, "balance": 5000,
             "currentHealth": 130, "currentMana": 130, "currentLocationId": "city_2",
             "attributes": {"vitality": 3, "wisdom": 3},
             "equipment": {"head": {"templateId": "plate_helmet_t1"}},

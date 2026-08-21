@@ -136,12 +136,19 @@ class EquipAction:
         return self.replaces_tier > 0
 
 
-def next_equip(inventory: Inventory, equipment: dict) -> EquipAction | None:
+def next_equip(inventory: Inventory, equipment: dict,
+               grade: int | None = None) -> EquipAction | None:
     """Best equipment move available, preferring free slots over swaps.
 
     Filling an empty slot is pure gain and cannot fail. A swap needs the worn
     piece removed first, so it is only proposed when the gain is unambiguous —
     a strictly higher tier in the same slot.
+
+    `grade` is the character grade, and a piece needs a grade at least equal to
+    its tier. Without that gate a wallet holding gear it cannot wear proposes
+    equipItem every cycle, is refused with FAILED_PRECONDITION — which the
+    engine reads as benign — and never reaches any branch below. Ten wallets
+    sat like that for five hours on 2026-08-21 while reporting zero errors.
     """
     best: EquipAction | None = None
 
@@ -150,6 +157,8 @@ def next_equip(inventory: Inventory, equipment: dict) -> EquipAction | None:
         if not slot:
             continue
         held = tier_of(piece.template_id)
+        if grade is not None and held > max(1, int(grade or 1)):
+            continue
 
         if slot_is_free(equipment, slot):
             action = EquipAction(piece.instance_id, piece.template_id, slot)
