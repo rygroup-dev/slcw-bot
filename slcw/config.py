@@ -149,6 +149,11 @@ class Config:
     # Gold kept back from any donation, on top of the general gold reserve.
     clan_gold_reserve: int = field(
         default_factory=lambda: _int("SLCW_CLAN_GOLD_RESERVE", 5000))
+    # Wallet id nominated to found the clan. While set, that wallet spends no
+    # gold at all until it has banked the 20,000 the call costs — otherwise it
+    # farms and refines its way past the target forever without reaching it.
+    clan_founder_wallet: str = field(
+        default_factory=lambda: os.environ.get("SLCW_CLAN_FOUNDER_WALLET", ""))
     # A destination must beat staying put by this multiple before travelling.
     # Travel time is dead time, so a marginal gain does not justify the trip.
     travel_margin: float = field(default_factory=lambda: _float("SLCW_TRAVEL_MARGIN", 1.35))

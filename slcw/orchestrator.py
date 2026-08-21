@@ -269,7 +269,8 @@ class Orchestrator:
                     f"next hunt task available "
                     f"({task_status.completed_count} completed)")]
 
-        clan_candidate = self._clan_candidate(state, holdings, clan_context)
+        clan_candidate = self._clan_candidate(
+            state, holdings, clan_context, wallet_id)
         if clan_candidate is not None:
             return [clan_candidate]
 
@@ -292,7 +293,7 @@ class Orchestrator:
         # carry no bids, refined goods do.
         workshop = refining.workshop_at(state.location_id)
         if workshop is not None:
-            spendable = max(0, state.gold - self.config.gold_reserve)
+            spendable = self.spendable_gold(state, wallet_id)
             recipe = refining.best_recipe(
                 workshop, state.level, state.grade, holdings or {}, spendable, market)
             if recipe is not None:
@@ -309,7 +310,7 @@ class Orchestrator:
             resource = farming.best_resource(
                 state.location_id, state.level, state.grade, market)
             if resource is not None:
-                spendable = max(0, state.gold - self.config.gold_reserve)
+                spendable = self.spendable_gold(state, wallet_id)
                 budget_state = _GoldBudget(state, spendable)
                 candidates.extend(econ.farming_candidates(
                     resource, budget_state, market, self.config))
@@ -403,7 +404,22 @@ class Orchestrator:
         affordable = int(state.energy) // int(target.energy_cost)
         return max(1, min(affordable, MAX_PROJECTED_REPEATS))
 
-    def _clan_candidate(self, state, holdings, clan_context):
+    def spendable_gold(self, state, wallet_id: str | None = None) -> int:
+        """Gold this wallet may commit, after every reserve that applies to it.
+
+        A nominated clan founder spends nothing until it has banked the 20,000
+        the call costs. There is no player-to-player gold transfer in this game
+        — every candidate endpoint name for one answers 404 — so a clan is paid
+        for by a single wallet saving up. A wallet that keeps buying catalysts
+        and gathering runs in the meantime never gets there.
+        """
+        gold = int(state.gold or 0)
+        founder = (self.config.clan_founder_wallet or "").strip()
+        if founder and wallet_id == founder and gold < clan_mod.CREATE_CLAN_GOLD:
+            return 0
+        return max(0, gold - self.config.gold_reserve)
+
+    def _clan_candidate(self, state, holdings, clan_context, wallet_id=None):
         """Free clan participation, in the order that costs the fleet least.
 
         Submitting quest resources spends raw drops the market has no bids for,
@@ -430,7 +446,9 @@ class Orchestrator:
 
         if self.config.clan_donate_gold and membership.can_donate():
             reserve = max(self.config.gold_reserve, self.config.clan_gold_reserve)
-            amount = clan_mod.affordable_donation(state.gold, reserve)
+            budget = self.spendable_gold(state, wallet_id)
+            amount = clan_mod.affordable_donation(
+                min(state.gold, budget + self.config.gold_reserve), reserve)
             if amount >= clan_mod.MIN_GOLD_DONATION:
                 return econ.free_candidate(
                     "makeDonation", {"amount": amount, "currency": "gold"},

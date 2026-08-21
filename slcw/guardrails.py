@@ -72,6 +72,22 @@ ALLOWED_CALLABLES = frozenset({
     # DKP and clan XP. The only clan action that costs the fleet nothing it
     # could otherwise have sold.
     "submitQuestResources",
+
+    # --- operator-only: allowed to execute, never offered as a candidate ---
+    # These three run a clan the operator owns. They are reachable exclusively
+    # through explicit slcwctl commands; build_candidates never emits them, so
+    # no unattended wallet can decide to take them on its own.
+    #
+    # createClan spends 20,000 gold in one call. That is not premium currency
+    # and it is not someone else's money, so denying it outright was wrong —
+    # but it is far too large a commitment for a decision loop, hence the
+    # operator gate rather than the allowlist alone.
+    "createClan",
+    # Accepts or rejects a join request to the operator's own clan.
+    "resolveApplication",
+    # Starts the clan's one free weekly quest. In a clan of the operator's own
+    # wallets, spending that 7-day cooldown is their call to make.
+    "generateClanQuest",
     # Moves gold out of the wallet into a treasury this operator may not
     # control, so it is allowlisted but gated behind SLCW_CLAN_DONATE_GOLD,
     # which is off by default. See slcw/clan.py.
@@ -111,16 +127,12 @@ DENIED_CALLABLES = {
     # whole clan of other people. An unattended fleet has no business doing any
     # of them, so they are denied by construction rather than left to a flag.
     "extendClanQuest": "costs 1,399 diamonds or 2,599 $SLCW to add 24h",
-    "createClan": "costs 20,000 gold; creating a clan is an operator decision",
     "disbandClan": "irreversibly destroys a clan and its treasury",
     "distributeTreasury": "moves the whole clan treasury to other players",
     "transferLeadership": "hands the clan to another account, 72h and final",
     "kickMember": "removes another player from their clan",
     "setMemberRole": "changes another player's standing in the clan",
     "updateClanSettings": "rewrites a clan's public identity",
-    "generateClanQuest": (
-        "starts the clan's one free weekly quest for everyone; whether to spend "
-        "that cooldown is a clan decision, not a bot's"),
 
     # --- premium currency ------------------------------------------------
     "spendDiamonds": "spends diamonds",

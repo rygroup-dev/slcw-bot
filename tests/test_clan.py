@@ -280,3 +280,38 @@ class DecideAndActClanTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FounderReserveTests(unittest.TestCase):
+    """The nominated founder must be able to reach 20,000 gold.
+
+    No player-to-player gold transfer exists in this game — twenty candidate
+    endpoint names all return 404 — so a clan is funded by one wallet saving up,
+    not by the fleet pooling. A wallet that keeps spending its gold on refining
+    and gathering never arrives, so while it is nominated it spends none.
+    """
+
+    from slcw.config import Config as _Config
+
+    def _reserve(self, wallet_id, gold, founder="wallet-01"):
+        from tests.test_orchestrator import make, FakeApi
+        from slcw.model import parse_player
+        cfg = self._Config(enabled=True, dry_run=False, gold_reserve=500,
+                           clan_founder_wallet=founder)
+        state = parse_player({"level": 12, "balance": gold, "energy": 50,
+                              "maxEnergy": 100, "currentHealth": 130,
+                              "currentMana": 130, "attributes": {"vitality": 3}})
+        return make(config=cfg, api=FakeApi()).spendable_gold(state, wallet_id)
+
+    def test_the_founder_spends_nothing_while_saving(self):
+        self.assertEqual(self._reserve("wallet-01", 12_214), 0)
+
+    def test_other_wallets_are_unaffected(self):
+        self.assertEqual(self._reserve("wallet-07", 12_214), 12_214 - 500)
+
+    def test_the_founder_spends_normally_once_it_can_afford_the_clan(self):
+        self.assertEqual(self._reserve("wallet-01", 25_000), 25_000 - 500)
+
+    def test_nothing_changes_when_no_founder_is_nominated(self):
+        self.assertEqual(self._reserve("wallet-01", 12_214, founder=""),
+                         12_214 - 500)

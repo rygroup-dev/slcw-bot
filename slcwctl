@@ -10,6 +10,18 @@ Usage:
   slcwctl doctor        Check configuration and environment health
   slcwctl once <id>     Run one cycle for a wallet and print the decision
   slcwctl why <id>      Show the last recorded decision rationale
+
+Clan administration. These four call endpoints the decision loop never touches:
+founding a clan spends 20,000 gold in one go, and admitting a member or starting
+the weekly quest are decisions about a clan you own, not moves in a game loop.
+
+  slcwctl clan-status              Show every wallet's clan standing
+  slcwctl clan-create <id> <name> <TAG>
+                                   Found a clan from one wallet (20,000 gold)
+  slcwctl clan-apply <clanId> [id...]
+                                   Apply wallets to a clan (all others by default)
+  slcwctl clan-accept <clanId>     Accept every pending application (leader only)
+  slcwctl clan-quest <id> <clanId> Start the clan's free weekly quest
 """
 from __future__ import annotations
 
@@ -203,6 +215,162 @@ def cmd_once(wallet_id: str) -> int:
     return 1 if decision.error else 0
 
 
+def _clan_session(vault, config, wallet_id: str):
+    """Open one authenticated session, or exit with a clear message."""
+    wallet = vault.get(wallet_id)
+    if wallet is None:
+        sys.exit(f"error: no wallet {wallet_id!r}")
+    transport = Transport.for_wallet(config, wallet)
+    session = SessionManager(config).get(wallet, transport)
+    return wallet, transport, session
+
+
+def cmd_clan_status() -> int:
+    from slcw import clan as clan_mod
+    config = config_mod.load()
+    vault = Vault()
+    unlock(vault)
+    print(f"{'wallet':12} {'gold':>8} {'clan':22} {'role':9} {'dkp':>6}  note")
+    for entry in vault.wallets():
+        wallet_id = entry["id"]
+        transport = Transport.for_wallet(config, entry)
+        try:
+            session = SessionManager(config).get(entry, transport)
+            api = GameApi(transport)
+            state = api.get_player(session)
+            clan_id = str((state.raw or {}).get("clanId") or "")
+            if not clan_id:
+                short = "-"
+                role, dkp, note = "-", 0, ""
+                if state.gold >= clan_mod.CREATE_CLAN_GOLD:
+                    note = "can found a clan"
+                else:
+                    note = (f"{clan_mod.CREATE_CLAN_GOLD - state.gold:,} short "
+                            f"of founding")
+            else:
+                doc = api.get_clan(session, clan_id)
+                short = f"{doc.get('name', '?')[:14]} [{doc.get('tag', '?')}]"
+                member = clan_mod.parse_membership(
+                    clan_id, api.get_clan_member(session, clan_id, session.local_id))
+                role, dkp = member.role, member.dkp
+                flags = []
+                if member.on_probation():
+                    flags.append("probation")
+                if member.donated_today():
+                    flags.append("donated today")
+                note = ", ".join(flags)
+            print(f"{wallet_id:12} {state.gold:>8,} {short:22} {role:9} {dkp:>6}  {note}")
+        except Exception as exc:  # one bad wallet must not hide the rest
+            print(f"{wallet_id:12} {'?':>8} {'error':22} {'-':9} {'-':>6}  {exc}")
+        finally:
+            transport.close()
+    return 0
+
+
+def cmd_clan_create(wallet_id: str, name: str, tag: str) -> int:
+    from slcw import clan as clan_mod
+    config = config_mod.load()
+    vault = Vault()
+    unlock(vault)
+    wallet, transport, session = _clan_session(vault, config, wallet_id)
+    try:
+        api = GameApi(transport)
+        state = api.get_player(session)
+        if state.gold < clan_mod.CREATE_CLAN_GOLD:
+            sys.exit(f"error: {wallet_id} has {state.gold:,} gold, needs "
+                     f"{clan_mod.CREATE_CLAN_GOLD:,}")
+        print(f"Founding {name!r} [{tag}] from {wallet_id} "
+              f"({state.gold:,} gold) — this spends "
+              f"{clan_mod.CREATE_CLAN_GOLD:,} gold.")
+        if input("  type the clan name to confirm: ").strip() != name:
+            sys.exit("aborted")
+        result = api.create_clan(session, name, tag)
+        print(json.dumps(result, indent=2, default=str)[:800])
+        after = api.get_player(session)
+        print(f"\nclanId: {(after.raw or {}).get('clanId', '(check clan-status)')}")
+        print(f"gold: {state.gold:,} -> {after.gold:,}")
+        return 0
+    finally:
+        transport.close()
+
+
+def cmd_clan_apply(clan_id: str, wallet_ids: list) -> int:
+    config = config_mod.load()
+    vault = Vault()
+    unlock(vault)
+    targets = wallet_ids or [w["id"] for w in vault.wallets()]
+    sent = 0
+    for wallet_id in targets:
+        entry = vault.get(wallet_id)
+        if entry is None:
+            print(f"  {wallet_id:12} no such wallet")
+            continue
+        transport = Transport.for_wallet(config, entry)
+        try:
+            session = SessionManager(config).get(entry, transport)
+            api = GameApi(transport)
+            state = api.get_player(session)
+            if (state.raw or {}).get("clanId"):
+                print(f"  {wallet_id:12} already in a clan")
+                continue
+            result = api.apply_clan(session, clan_id)
+            app = (result.get("result") or result).get("applicationId", "?")
+            print(f"  {wallet_id:12} applied ({app})")
+            sent += 1
+        except Exception as exc:
+            print(f"  {wallet_id:12} {type(exc).__name__}: {str(exc)[:70]}")
+        finally:
+            transport.close()
+    print(f"{sent} application(s) sent")
+    return 0
+
+
+def cmd_clan_accept(clan_id: str) -> int:
+    """Accept every pending application, from whichever wallet leads the clan."""
+    config = config_mod.load()
+    vault = Vault()
+    unlock(vault)
+    for entry in vault.wallets():
+        transport = Transport.for_wallet(config, entry)
+        try:
+            session = SessionManager(config).get(entry, transport)
+            api = GameApi(transport)
+            state = api.get_player(session)
+            if str((state.raw or {}).get("clanId") or "") != clan_id:
+                continue
+            member = api.get_clan_member(session, clan_id, session.local_id)
+            if str((member or {}).get("role") or "") not in ("leader", "officer"):
+                continue
+            pending = api.get_clan_applications(session, clan_id)
+            if not pending:
+                print("no pending applications")
+                return 0
+            for app in pending:
+                app_id = app.get("applicationId", "")
+                try:
+                    api.resolve_clan_application(session, app_id, "accept")
+                    print(f"  accepted {app_id}")
+                except Exception as exc:
+                    print(f"  {app_id} {type(exc).__name__}: {str(exc)[:70]}")
+            return 0
+        finally:
+            transport.close()
+    sys.exit(f"error: no wallet leads clan {clan_id!r}")
+
+
+def cmd_clan_quest(wallet_id: str, clan_id: str) -> int:
+    config = config_mod.load()
+    vault = Vault()
+    unlock(vault)
+    wallet, transport, session = _clan_session(vault, config, wallet_id)
+    try:
+        result = GameApi(transport).generate_clan_quest(session, clan_id)
+        print(json.dumps(result, indent=2, default=str)[:800])
+        return 0
+    finally:
+        transport.close()
+
+
 def cmd_why(wallet_id: str) -> int:
     from slcw.runner import FLEET_STATE
     if not FLEET_STATE.exists():
@@ -238,6 +406,24 @@ def main(argv: list[str]) -> int:
         if not rest:
             sys.exit("usage: slcwctl once <wallet-id>")
         return cmd_once(rest[0])
+    if command == "clan-status":
+        return cmd_clan_status()
+    if command == "clan-create":
+        if len(rest) < 3:
+            sys.exit('usage: slcwctl clan-create <wallet-id> "<name>" "<TAG>"')
+        return cmd_clan_create(rest[0], rest[1], rest[2])
+    if command == "clan-apply":
+        if not rest:
+            sys.exit("usage: slcwctl clan-apply <clanId> [wallet-id ...]")
+        return cmd_clan_apply(rest[0], rest[1:])
+    if command == "clan-accept":
+        if not rest:
+            sys.exit("usage: slcwctl clan-accept <clanId>")
+        return cmd_clan_accept(rest[0])
+    if command == "clan-quest":
+        if len(rest) < 2:
+            sys.exit("usage: slcwctl clan-quest <wallet-id> <clanId>")
+        return cmd_clan_quest(rest[0], rest[1])
     if command == "why":
         if not rest:
             sys.exit("usage: slcwctl why <wallet-id>")

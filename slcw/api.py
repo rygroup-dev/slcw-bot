@@ -188,6 +188,41 @@ class GameApi:
             "clanId": clan_id, "questId": quest_id,
             "itemId": item_id, "amount": int(amount)})
 
+    def create_clan(self, session, name: str, tag: str, description: str = "",
+                    languages: list | None = None) -> dict:
+        """Found a clan. Costs 20,000 gold — operator-only, never a candidate."""
+        return self._call(session, "createClan", {
+            "name": name, "tag": tag, "description": description,
+            "languages": languages or ["en"]})
+
+    def resolve_clan_application(self, session, application_id: str,
+                                 action: str = "accept") -> dict:
+        """Leader accepts or rejects a join request. action: accept|reject."""
+        return self._call(session, "resolveApplication", {
+            "applicationId": application_id, "action": action})
+
+    def generate_clan_quest(self, session, clan_id: str) -> dict:
+        return self._call(session, "generateClanQuest", {"clanId": clan_id})
+
+    def get_clan_applications(self, session, clan_id: str) -> list[dict]:
+        """Pending join requests for a clan, with their document ids attached."""
+        payload = self.transport.request(
+            "POST", f"{FIRESTORE_BASE}:runQuery",
+            json_body={"structuredQuery": {
+                "from": [{"collectionId": "clan_applications"}], "limit": 200}},
+            headers={"Authorization": f"Bearer {session.id_token}"})
+        rows = payload if isinstance(payload, list) else []
+        out = []
+        for row in rows:
+            doc = row.get("document") if isinstance(row, dict) else None
+            if not doc:
+                continue
+            parsed = decode_document(doc)
+            parsed["applicationId"] = doc["name"].rsplit("/", 1)[-1]
+            if not clan_id or parsed.get("clanId") == clan_id:
+                out.append(parsed)
+        return out
+
     def get_clan(self, session, clan_id: str) -> dict:
         return self._document(f"clans/{clan_id}", session.id_token)
 
