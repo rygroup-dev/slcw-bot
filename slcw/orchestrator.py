@@ -277,11 +277,12 @@ class Orchestrator:
                 params = {"instanceId": sale.instance_id,
                           "templateId": sale.template_id}
                 if not self._parked(wallet_id, "sellEquipmentItem", params):
+                    grade = max(1, state.grade or 1)
+                    why = (f"grade {grade} can never wear tier {sale.tier}"
+                           if sale.tier > grade else "spare, and the bag is full")
                     return [econ.free_candidate(
                         "sellEquipmentItem", params,
-                        f"selling {sale.template_id} back "
-                        f"(grade {max(1, state.grade or 1)} cannot wear tier "
-                        f"{sale.tier}, and it costs a slot)")]
+                        f"selling {sale.template_id} back ({why})")]
 
             equip = inv_mod.next_equip(inventory, state.equipment, state.grade)
             if equip is not None:
