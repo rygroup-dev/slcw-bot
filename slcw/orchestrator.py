@@ -191,6 +191,21 @@ class Orchestrator:
             return False
         return self.rejections.is_parked(wallet_id, action, params)
 
+    def _free(self, wallet_id, action: str, params: dict, reason: str):
+        """A free-value candidate, or None when the server just refused it.
+
+        Every free-value branch below returns early, which is what makes them
+        free-value: nothing that costs a resource should outrank reward already
+        earned. The cost of that shape is that a branch which returns a call the
+        server refuses hands the wallet the same doomed action every cycle, at
+        zero errors, forever — the failure the rejection memory exists to stop.
+        Returning None here lets the caller fall through to the next branch, so
+        a parked action costs the wallet nothing instead of costing it the day.
+        """
+        if self._parked(wallet_id, action, params):
+            return None
+        return econ.free_candidate(action, params, reason)
+
     # --- candidate generation -------------------------------------------
     def build_candidates(self, state, market=None, holdings=None,
                          include_travel: bool = True, task_status=None,
@@ -217,27 +232,36 @@ class Orchestrator:
 
         unclaimed = state.unclaimed_levels()
         if unclaimed:
-            return [econ.free_candidate(
-                "claimInitialReward", {"level": unclaimed[0]},
-                f"level {unclaimed[0]} reward unclaimed")]
+            # Refused with "Inventory full" while the bag is at 40/40, which is
+            # benign — so this has to be skippable or the wallet never gets to
+            # the actions that would empty the bag.
+            claim = self._free(wallet_id, "claimInitialReward",
+                               {"level": unclaimed[0]},
+                               f"level {unclaimed[0]} reward unclaimed")
+            if claim is not None:
+                return [claim]
 
         # Levelling is manual and free, and each level grants an attribute
         # point — so it comes before spending them.
         if leveling.can_level_up(state.level, state.grade, state.xp):
-            return [econ.free_candidate(
-                "buyLevel", leveling.payload(),
+            level_up = self._free(
+                wallet_id, "buyLevel", leveling.payload(),
                 f"level {state.level} → {state.level + 1} "
-                f"({state.xp:,}/{leveling.xp_required(state.level):,} xp)")]
+                f"({state.xp:,}/{leveling.xp_required(state.level):,} xp)")
+            if level_up is not None:
+                return [level_up]
 
         if state.attribute_points > 0:
             # Points left unspent do nothing at all, and which one to raise is a
             # policy choice rather than a fact — so it is named and configurable.
             target = build_mod.next_attribute(state.attributes, self.config.build)
-            return [econ.free_candidate(
-                "spendAttributePoints",
+            spend = self._free(
+                wallet_id, "spendAttributePoints",
                 {"targetType": "attribute", "targetId": target, "amount": 1},
                 f"{state.attribute_points} point(s) unspent → {target} "
-                f"({self.config.build} build)")]
+                f"({self.config.build} build)")
+            if spend is not None:
+                return [spend]
 
         # A tutorial-chain quest that pays pure XP for a no-argument call —
         # free value, so it is taken before anything that costs a resource.
@@ -298,11 +322,16 @@ class Orchestrator:
                 # A strictly higher tier in an occupied slot is a pure gain
                 # too, but the game needs the worn piece removed first —
                 # unequipItem, then equipItem, as one atomic decision.
-                return [econ.free_candidate(
-                    "upgradeEquip",
+                # The swap needs a free slot to put the worn piece back into,
+                # so a full bag refuses it — benignly, and forever, unless the
+                # refusal is allowed to move the wallet on to something else.
+                upgrade = self._free(
+                    wallet_id, "upgradeEquip",
                     {"slot": equip.slot, "instanceId": equip.instance_id},
                     f"{equip.template_id} upgrades {equip.slot} "
-                    f"(tier {equip.replaces_tier} → held)")]
+                    f"(tier {equip.replaces_tier} → held)")
+                if upgrade is not None:
+                    return [upgrade]
 
         # A finished hunt task is gold sitting there. This one stays ahead of the
         # clan branch: it is instant, it is free, and the gold it pays is what
@@ -662,11 +691,13 @@ class Orchestrator:
                 and not registry.founded and not in_clan
                 and self.config.clan_name and self.config.clan_tag
                 and state.gold >= clan_mod.CREATE_CLAN_GOLD):
-            return econ.free_candidate(
-                "createClan",
+            found = self._free(
+                wallet_id, "createClan",
                 {"name": self.config.clan_name, "tag": self.config.clan_tag},
                 f"founding {self.config.clan_name!r} for "
                 f"{clan_mod.CREATE_CLAN_GOLD:,} gold")
+            if found is not None:
+                return found
 
         # Any wallet outside the clan applies to it, including one added to the
         # vault long after the clan was founded — nothing here is per-wallet
@@ -688,9 +719,11 @@ class Orchestrator:
                 and registry.founded and not in_clan and holds_a_seat
                 and not founded_by_this_wallet
                 and not registry.has_pending_application(wallet_id or "")):
-            return econ.free_candidate(
-                "applyClan", {"clanId": registry.clan_id},
+            apply = self._free(
+                wallet_id, "applyClan", {"clanId": registry.clan_id},
                 f"joining clan {registry.clan_id}")
+            if apply is not None:
+                return apply
 
         # Everything below reads this wallet's standing inside the clan. The
         # player document can say "in a clan" while the membership read is still
@@ -707,11 +740,13 @@ class Orchestrator:
                 levels=clan_context.get("levels_by_uid"))
             if ours:
                 app = ours[0]
-                return econ.free_candidate(
-                    "resolveApplication",
+                admit = self._free(
+                    wallet_id, "resolveApplication",
                     {"applicationId": app.get("applicationId", ""),
                      "action": "accept"},
                     f"admitting {app.get('displayName') or app.get('userId', '?')}")
+                if admit is not None:
+                    return admit
 
         quest = clan_context.get("quest")
         # Starting the weekly quest is what buys the clan its seats. A quest
@@ -721,20 +756,28 @@ class Orchestrator:
         # the game converts into clan levels at anything like that rate, and the
         # 2,000 raw items it asks for have no market bids to give up.
         if quest is None and membership.role == "leader":
-            return econ.free_candidate(
-                "generateClanQuest", {"clanId": membership.clan_id},
+            # The server answers a second request with "cooldown_active", and
+            # answers it benignly. Unparked, the leader asked again every cycle
+            # for hours — one Telegram message per ask, and no other action all
+            # day, because this branch sits above everything that earns.
+            generate = self._free(
+                wallet_id, "generateClanQuest", {"clanId": membership.clan_id},
                 f"starting the weekly clan quest "
                 f"(+{clan_mod.QUEST_CLAN_XP:,} clan XP)")
+            if generate is not None:
+                return generate
 
         if quest is not None:
             item, amount = clan_mod.submittable(quest, holdings or {})
             if item and amount > 0:
-                return econ.free_candidate(
-                    "submitQuestResources",
+                submit = self._free(
+                    wallet_id, "submitQuestResources",
                     {"clanId": membership.clan_id, "questId": quest.quest_id,
                      "itemId": item, "amount": amount},
                     f"{amount}x {item} to clan quest "
                     f"(pool {quest.reward_dkp_pool:,} DKP)")
+                if submit is not None:
+                    return submit
 
             # Nothing to hand in, so go and get some. Submitting was built
             # before anything made the fleet collect: a quest asks for 2,000 of
@@ -760,10 +803,13 @@ class Orchestrator:
             amount = clan_mod.affordable_donation(
                 min(state.gold, budget + self.config.gold_reserve), reserve)
             if amount >= clan_mod.MIN_GOLD_DONATION:
-                return econ.free_candidate(
-                    "makeDonation", {"amount": amount, "currency": "gold"},
+                donate = self._free(
+                    wallet_id, "makeDonation",
+                    {"amount": amount, "currency": "gold"},
                     f"daily clan donation {amount:,}g "
                     f"(+{clan_mod.donation_dkp(amount)} DKP)")
+                if donate is not None:
+                    return donate
         return None
 
     def _quest_errand(self, state, quest):

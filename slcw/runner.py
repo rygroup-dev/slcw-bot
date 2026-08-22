@@ -527,11 +527,10 @@ class Fleet:
             quest = (payload or {}).get("quest") or payload or {}
             wanted = ", ".join(
                 f"{r.get('required', 0)}x {r.get('itemName') or r.get('itemId')}"
-                for r in (quest.get("requirements") or [])) or "?"
-            self.notifier.send(
-                f"\U0001F4DC quest clan baru: <b>{wanted}</b>\n"
-                f"+{clan_mod.QUEST_CLAN_XP:,} clan XP kalau selesai "
-                f"(seat bertambah tiap level)")
+                for r in (quest.get("requirements") or []))
+            self.alerts.clan_quest(
+                wanted, str(quest.get("questId") or quest.get("id") or ""),
+                clan_mod.QUEST_CLAN_XP)
         elif decision.action == "resolveApplication" and not decision.error:
             # The applicant is now a member; drop its pending marker so a later
             # cycle does not think it is still waiting.

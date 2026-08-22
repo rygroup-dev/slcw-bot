@@ -60,6 +60,12 @@ class FakeApi:
     def sell_equipment_item(self, session, instance_id):
         return self._record("sellEquipmentItem", instanceId=instance_id)
 
+    def unequip_item(self, session, slot_name):
+        return self._record("unequipItem", slotName=slot_name)
+
+    def equip_item(self, session, instance_id):
+        return self._record("equipItem", instanceId=instance_id)
+
     def start_relax(self, session):
         return self._record("startRelax")
 
@@ -400,6 +406,62 @@ class RejectionParkingTests(unittest.TestCase):
         self.assertEqual(first.action, "openChests")
         self.assertFalse(orchestrator.rejections.parked_actions("w1"))
 
+    def test_a_refused_level_reward_does_not_freeze_the_wallet(self):
+        """Measured live on 2026-08-22: sixteen wallets sat at 40/40 slots with
+        an unclaimed level-20 reward. claimInitialReward answered "Inventory
+        full", which is benign, and the branch returned it again every cycle for
+        thirteen hours — zero errors, zero actions, zero gold."""
+        api = FakeApi()
+        api.fail_with = ("claimInitialReward", "FAILED_PRECONDITION",
+                         "Inventory full. Please clear some space.")
+        orchestrator = make(api=api)
+        state = parse_player({
+            "level": 20, "grade": 2, "energy": 80, "maxEnergy": 100,
+            "balance": 5000, "currentHealth": 210, "currentMana": 130,
+            "currentLocationId": "city_2",
+            "attributes": {"vitality": 3, "wisdom": 3},
+            "claimedInitialRewardsV2": list(range(1, 20)), "newbieQuest": 999,
+            "activity": None, "freeEnergyRefillsToday": 3,
+            "lastFreeEnergyRefillDate": "2099-01-01"})
+
+        first = orchestrator.decide_and_act(
+            {"id": "w1"}, None, state, None, None, None, None)
+        self.assertEqual(first.action, "claimInitialReward")
+
+        second = orchestrator.decide_and_act(
+            {"id": "w1"}, None, state, None, None, None, None)
+        self.assertNotEqual(second.action, "claimInitialReward")
+
+    def test_a_refused_gear_upgrade_does_not_freeze_the_wallet(self):
+        """Same shape, different branch: the swap needs a free slot to put the
+        worn piece into, so a full bag refuses it benignly and forever."""
+        from slcw import inventory as inv
+        api = FakeApi()
+        api.fail_with = ("unequipItem", "FAILED_PRECONDITION",
+                         "Your inventory is full. Clear some space first.")
+        orchestrator = make(api=api)
+        inventory = inv.parse_inventory({"maxSlots": 1, "slots": [
+            {"slotIndex": 0, "templateId": "plate_helmet_t2",
+             "quantity": 1, "instanceId": "i1"}]})
+        state = parse_player({
+            "level": 6, "grade": 2, "energy": 80, "maxEnergy": 100,
+            "balance": 5000, "currentHealth": 130, "currentMana": 130,
+            "currentLocationId": "city_2",
+            "attributes": {"vitality": 3, "wisdom": 3},
+            "claimedInitialRewardsV2": list(range(1, 7)), "newbieQuest": 999,
+            "activity": None, "freeEnergyRefillsToday": 3,
+            "lastFreeEnergyRefillDate": "2099-01-01",
+            "equipment": {"head": {"templateId": "plate_helmet_t1",
+                                   "instanceId": "worn"}}})
+
+        first = orchestrator.decide_and_act(
+            {"id": "w1"}, None, state, None, None, None, inventory)
+        self.assertEqual(first.action, "upgradeEquip")
+
+        second = orchestrator.decide_and_act(
+            {"id": "w1"}, None, state, None, None, None, inventory)
+        self.assertNotEqual(second.action, "upgradeEquip")
+
     def test_an_open_battle_is_never_parked(self):
         """Parking resumeBattle would leave the wallet busy forever."""
         api = FakeApi()
@@ -598,6 +660,10 @@ class ExecutorCoverageTests(unittest.TestCase):
             if name not in func_names:
                 continue
             args = list(node.args)
+            # `_free(wallet_id, action, ...)` wraps free_candidate with the
+            # rejection check, so its action name sits one place further along.
+            if name == "_free" and args:
+                args.pop(0)
             for kw in node.keywords:
                 if kw.arg == "action":
                     args.insert(0, kw.value)
@@ -630,7 +696,7 @@ class ExecutorCoverageTests(unittest.TestCase):
 
     def test_every_choosable_action_has_an_executor(self):
         from slcw import guardrails
-        chosen = (self._literals("slcw/orchestrator.py", {"free_candidate"})
+        chosen = (self._literals("slcw/orchestrator.py", {"free_candidate", "_free"})
                   | self._literals("slcw/economy.py",
                                    {"ActionScore", "free_candidate"}))
         # Only real server calls need an executor; the rest are bookkeeping.
@@ -640,7 +706,7 @@ class ExecutorCoverageTests(unittest.TestCase):
 
     def test_the_scan_actually_finds_the_known_actions(self):
         """A scan that silently matched nothing would pass the test above."""
-        chosen = self._literals("slcw/orchestrator.py", {"free_candidate"})
+        chosen = self._literals("slcw/orchestrator.py", {"free_candidate", "_free"})
         self.assertIn("createClan", chosen)
         self.assertIn("generateClanQuest", chosen)
         self.assertIn("createClan", self._executors())

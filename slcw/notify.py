@@ -92,6 +92,22 @@ class Alerts:
     def level_up(self, wallet_id: str, level: int) -> None:
         self.notifier.send(f"⬆️ <b>{wallet_id}</b> naik ke level {level}")
 
+    def clan_quest(self, wanted: str, quest_id: str, clan_xp: int) -> None:
+        """A new clan quest, announced once per quest.
+
+        The server answers a second generateClanQuest with "cooldown_active",
+        which the engine classifies as benign — so the call returns a success
+        carrying no quest, and the leader used to re-announce on every cycle.
+        A quest with no requirements is that empty answer, not news.
+        """
+        if not wanted:
+            return
+        if self._once(f"clanquest:{quest_id or wanted}"):
+            self.notifier.send(
+                f"\U0001F4DC quest clan baru: <b>{wanted}</b>\n"
+                f"+{clan_xp:,} clan XP kalau selesai "
+                f"(seat bertambah tiap level)")
+
     def crossed_market(self, books: list) -> None:
         rows = "\n".join(
             f"  {b.template_id}: bid {b.best_bid:,.0f} / ask {b.best_ask:,.0f} "
