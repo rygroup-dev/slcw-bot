@@ -12,7 +12,8 @@ game offers:
     crafting recipe using one         none, across all 165 recipe inputs
     refining input                    none, across all 28 raw materials
     sellEquipmentItem                 "Shop stock is full", every gear template
-    expandInventory                   costs diamonds; every wallet holds zero
+    expandInventory                   100 * 2^expansions diamonds; 400,000
+                                      gold a wallet at the gold market's bid
 
 A full bag then refuses openChests, claimInitialReward and upgradeEquip, so the
 fighting that fills it also stops paying out. Monster drops have exactly one

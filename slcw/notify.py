@@ -5,9 +5,18 @@ importing the UI layer.
 """
 from __future__ import annotations
 
+import collections
 import json
+import threading
+import time
 import urllib.parse
 import urllib.request
+
+# How long destroyed stacks are collected before one digest goes out. Junk is
+# destroyed roughly twenty times an hour across the fleet, and a message per
+# stack is a message every three minutes — noise the operator learns to swipe
+# away, which is the opposite of what an alert is for.
+DISCARD_DIGEST_S = 3600
 
 
 class Notifier:
@@ -54,6 +63,9 @@ class Alerts:
     def __init__(self, notifier: Notifier):
         self.notifier = notifier
         self._seen: set = set()
+        self._discards: list = []
+        self._discard_lock = threading.Lock()
+        self._discard_since = time.time()
 
     def _once(self, key: str) -> bool:
         """Rate-limit by event identity so a stuck condition alerts one time."""
@@ -123,14 +135,46 @@ class Alerts:
             f"💎 <b>{wallet_id}</b> dapat {item} ×{quantity} "
             f"(≈{value:,.0f} gold di best-bid)")
 
-    def discarded(self, wallet_id: str, reason: str) -> None:
-        """Every destroyed stack is reported, without exception.
+    def discarded(self, wallet_id: str, item_id: str, quantity: int) -> None:
+        """Collect a destroyed stack; the operator hears a digest, not a drip.
 
-        This is the one action the operator cannot undo or audit after the fact
-        — the item is simply gone from the bag — so it is never folded into the
-        dashboard the way routine actions are.
+        Reporting each one individually was the honest first version — this is
+        the only irreversible thing the bot does to an item — but at twenty
+        stacks an hour it filled the chat and taught the operator to ignore the
+        one channel that also carries circuit breakers. Nothing is lost by
+        holding them: data/discards.jsonl is written before this is ever called
+        and is the real audit trail, so what goes to Telegram summarises a
+        record that already exists on disk.
         """
-        self.notifier.send(f"\U0001F5D1 <b>{wallet_id}</b> {reason}")
+        with self._discard_lock:
+            self._discards.append((wallet_id, str(item_id), int(quantity)))
+        self.flush_discards()
+
+    def flush_discards(self, force: bool = False) -> None:
+        """Send the digest if the window has closed, or on demand at shutdown."""
+        now = time.time()
+        with self._discard_lock:
+            if not self._discards:
+                self._discard_since = now
+                return
+            if not force and now - self._discard_since < DISCARD_DIGEST_S:
+                return
+            pending, window = self._discards, now - self._discard_since
+            self._discards = []
+            self._discard_since = now
+
+        counts = collections.Counter(item for _, item, _ in pending)
+        items = sum(quantity for _, _, quantity in pending)
+        wallets = len({wallet for wallet, _, _ in pending})
+        shown = counts.most_common(8)
+        listing = " · ".join(f"{item} ×{n}" for item, n in shown)
+        if len(counts) > len(shown):
+            listing += f" · +{len(counts) - len(shown)} jenis lain"
+        self.notifier.send(
+            f"\U0001F5D1 <b>{len(pending)} tumpukan</b> sampah dibuang "
+            f"({items} item, {wallets} wallet, {window / 60:.0f} menit)\n"
+            f"{listing}\n\n"
+            f"Rincian lengkap ada di <code>data/discards.jsonl</code>.")
 
     def low_energy_idle(self, wallet_id: str) -> None:
         if self._once(f"idle:{wallet_id}"):

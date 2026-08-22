@@ -253,7 +253,15 @@ DENIED_CALLABLES = {
 
     # --- gold-costed, with no measured return ----------------------------
     "renounceCitizenship": "discards a paid-for status",
-    "expandInventory": "costs currency, return not measured",
+    # Read straight off the inventory page: the cost is
+    # 100 * 2^inventoryExpansions paid from premium_balance, for +10 slots.
+    # Reachable in principle — the gold market bids diamonds for gold, and on
+    # 2026-08-22 the best bid was 25 diamonds per lot of 100,000 gold, so the
+    # first expansion costs one wallet 400,000 gold. It stays denied because
+    # the new slots would hold the same items the discard policy destroys for
+    # having no bid, no recipe and no refine: 400,000 gold to postpone the
+    # treadmill by ten slots buys nothing.
+    "expandInventory": "diamond-priced; the slots would only hold junk",
     "resetPoints": "costs currency to undo attribute spending",
     "upgradeMiningQuests": "costs currency, return not measured",
     "upgradeMounts": "costs currency, return not measured",
@@ -311,6 +319,24 @@ DENIED_CALLABLES = {
     "syncDiscordRoles": "binds the account to an external identity",
     "linkTelegramAccount": "binds the account to an external identity",
     "unlinkTelegramAccount": "binds the account to an external identity",
+
+    # --- classified 2026-08-22, from a re-fetch of the live bundle ---------
+    # Three route chunks changed since the 2026-08-16 capture: /clan and
+    # /wildland only in ways the bot does not touch (clan search, a favourite-
+    # monsters list kept in the browser's own storage), and /vanguard, which is
+    # new machinery: a wave dungeon at city_11, turn-based, where both sides
+    # pick an attack zone and a defence zone each round.
+    #
+    # It is denied on measurement, not on principle, and the gate is not ours
+    # to open yet: the page requires `grade >= 3` and `currentLocationId ==
+    # "city_11"`. Grade 3 is level 30 plus 25 imperial seals; the fleet tops
+    # out at level 24. The entry ticket is gold, not diamonds — the first run
+    # of each day is free, and after that 243 * 9^(grade-3) * 2^(runs today) —
+    # so this becomes worth measuring the moment a wallet reaches grade 3.
+    # Progress persists: a run restarts at the last cleared multiple of ten
+    # waves, and `cities/11/vanguard` keeps a top-ten board by waves.
+    "startVanguardBattle": "wave dungeon needs grade 3; no reward model yet",
+    "vanguardProcessTurn": "wave dungeon needs grade 3; no reward model yet",
 }
 
 

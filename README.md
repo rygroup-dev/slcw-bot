@@ -513,7 +513,9 @@ route out existed. Monster drops carry **no market bid**, appear in **none of th
 165 crafting recipe inputs**, are **none of the 28 refining raw materials**, the
 gear shop answers `sellEquipmentItem` with "Shop stock is full" once thirty
 wallets have dumped the same t1 plate into it, and `expandInventory` is priced in
-diamonds no wallet holds. A full bag then refuses `openChests`,
+diamonds no wallet holds (100 × 2^expansions of them, which the gold market
+would sell for about 400,000 gold a wallet — paid to store more of what this
+section is about destroying). A full bag then refuses `openChests`,
 `claimInitialReward` and `upgradeEquip` — so the fighting that fills it stops
 paying out, and the wallet loops on a refusal that classifies as benign.
 
@@ -535,8 +537,13 @@ item has to fail before it is even a candidate:
 
 Then the active clan quest's items are removed, and what remains is destroyed
 smallest stack first: the fewest items lost per slot recovered, and the large
-stacks a quest could actually finish are the last to go. Every deletion pushes a
-Telegram message, because it is the only action here with no undo.
+stacks a quest could actually finish are the last to go.
+
+Every deletion is written to `data/discards.jsonl` before it is announced, and
+that file — not the chat — is the audit trail. Telegram gets a digest once an
+hour instead: at roughly twenty stacks an hour, a message per stack is a message
+every three minutes, and an alert channel that constant is one the operator stops
+reading, including the circuit breakers it also carries.
 
 Two systems were checked live and found to be dead ends, on purpose rather than by
 accident: **mining quests** return a live HTTP 404 (no deployed function answers

@@ -126,6 +126,9 @@ class Fleet:
 
     def stop(self) -> None:
         self._stop.set()
+        # Whatever was destroyed since the last digest is reported now rather
+        # than dying with the process.
+        self.alerts.flush_discards(force=True)
         for event in self._wake_events.values():
             event.set()
 
@@ -156,6 +159,11 @@ class Fleet:
                     self.ensure_worker(wallet)
 
                 self.persist()
+
+                # Wallets only call in when they destroy something, so without
+                # a tick here the last few stacks of a quiet night would sit
+                # unreported until the next one was thrown away.
+                self.alerts.flush_discards()
 
             except Exception:
                 logger.exception("fleet watchdog error")
@@ -563,10 +571,10 @@ class Fleet:
             # Written down before it is announced: the Telegram message can be
             # lost, muted or scrolled past, and this is the only record that the
             # item ever existed.
-            discard_mod.record(
-                status.wallet_id, decision.detail.get("item_id", "?"),
-                decision.detail.get("quantity", 0))
-            self.alerts.discarded(status.wallet_id, decision.reason)
+            item_id = decision.detail.get("item_id", "?")
+            quantity = decision.detail.get("quantity", 0)
+            discard_mod.record(status.wallet_id, item_id, quantity)
+            self.alerts.discarded(status.wallet_id, item_id, quantity)
 
         if decision.action == "idle" and "no profitable action" in decision.reason:
             self.alerts.low_energy_idle(status.wallet_id)
