@@ -21,7 +21,8 @@ import sys
 import threading
 import time
 
-from slcw import config as config_mod, keys, ledger
+from slcw import config as config_mod
+from slcw import discard as discard_mod, keys, ledger
 from slcw.vault import VaultError
 
 from . import ui
@@ -352,7 +353,16 @@ class TelegramBot:
     def economy_markup(self) -> str:
         return ui.economy_menu(self.config.farming_gold,
                                self.config.farming_gold_hours,
-                               self.config.auto_travel)
+                               self.config.auto_travel,
+                               self.config.discard_junk)
+
+    def _set_discard(self, enabled: bool) -> None:
+        """Flip the switch in the live config and in .env, so it survives a
+        restart the way the other economy toggles do."""
+        self.config = dataclasses.replace(self.config, discard_junk=enabled)
+        self.fleet.config = self.config
+        config_mod.persist_overrides(
+            {"SLCW_DISCARD_JUNK": str(enabled).lower()})
 
     def control_markup(self) -> str:
         paused = sum(1 for s in self.fleet.status.values() if s.paused)
@@ -450,6 +460,21 @@ class TelegramBot:
             self.fleet.config = self.config
             config_mod.persist_overrides(
                 {"SLCW_AUTO_TRAVEL": str(self.config.auto_travel).lower()})
+            return self.edit(chat_id, message_id, ui.ECONOMY_INTRO,
+                             self.economy_markup())
+        elif action == "toggle_discard":
+            # Off is one tap; on is the only switch in this menu that destroys
+            # anything, so it goes through the same confirmation the wallet
+            # export does.
+            if self.config.discard_junk:
+                self._set_discard(False)
+                return self.edit(chat_id, message_id, ui.ECONOMY_INTRO,
+                                 self.economy_markup())
+            return self.edit(chat_id, message_id,
+                             ui.discard_help(discard_mod.totals()),
+                             ui.discard_confirm_menu())
+        elif action == "discardgo":
+            self._set_discard(True)
             return self.edit(chat_id, message_id, ui.ECONOMY_INTRO,
                              self.economy_markup())
         elif action == "goldhours":

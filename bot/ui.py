@@ -46,10 +46,15 @@ def status_menu(page: int = 1, pages: int = 1) -> str:
 
 
 def economy_menu(gold_farming: bool = True, gold_hours: int = 8,
-                 auto_travel: bool = True) -> str:
+                 auto_travel: bool = True, discard_junk: bool = False) -> str:
     gold_label = (f"🟢 Gold-mode: ON ({gold_hours}j)" if gold_farming
                   else "🔴 Gold-mode: OFF")
     travel_label = "🟢 Auto-travel: ON" if auto_travel else "🔴 Auto-travel: OFF"
+    # The only switch here that destroys something. Turning it OFF is one tap
+    # because that direction is always safe; turning it ON goes through a
+    # confirmation screen first.
+    discard_label = ("🟢 Buang sampah: ON" if discard_junk
+                     else "🔴 Buang sampah: OFF")
     return keyboard([
         [("🔗 Rantai profit", "nav:chain")],
         [("🌾 Gathering", "nav:farming"), ("⚗️ Refining", "nav:refining")],
@@ -57,8 +62,44 @@ def economy_menu(gold_farming: bool = True, gold_hours: int = 8,
         [(gold_label, "ctl:toggle_goldfarm")],
         [("⏱ Durasi gold-mode", "ctl:goldhours")],
         [(travel_label, "ctl:toggle_travel")],
+        [(discard_label, "ctl:toggle_discard")],
         back_row(),
     ])
+
+
+def discard_confirm_menu() -> str:
+    return keyboard([
+        [("⚠️ Ya, nyalakan", "ctl:discardgo")],
+        [("✖️ Batal", "nav:economy")],
+    ])
+
+
+def discard_help(destroyed: dict) -> str:
+    """What turning this on means, and what it has already cost."""
+    lines = [
+        "<b>🗑 Buang sampah otomatis</b>\n",
+        "Satu-satunya aksi bot yang <b>menghancurkan item, tanpa bisa "
+        "dibatalkan</b>.\n",
+        "Dipakai waktu tas mentok 40/40 dan tidak ada jalan keluar lain: drop "
+        "monster tidak punya bid di market, tidak dipakai resep crafting mana "
+        "pun, bukan bahan refining, stok toko gear penuh, dan perluasan tas "
+        "dibayar diamond.\n",
+        "<b>Tidak akan pernah dihapus:</b> equipment, peti, imperial seal, "
+        "apa pun yang dipakai resep atau refinery, apa pun yang ada bid-nya, "
+        "dan item yang diminta quest clan aktif.\n",
+        "Kalau harga pasar sedang basi, <b>tidak ada yang dihapus sama "
+        "sekali</b> — harga hilang tidak sama dengan tidak berharga.\n",
+        "Yang dibuang: stack <b>terkecil dulu</b>, jadi paling sedikit item "
+        "hilang per slot yang dibebaskan.\n",
+    ]
+    if destroyed:
+        total = sum(destroyed.values())
+        top = sorted(destroyed.items(), key=lambda item: -item[1])[:5]
+        rows = ", ".join(f"{item} ×{count}" for item, count in top)
+        lines.append(f"<b>Sudah dibuang sejauh ini:</b> {total} item — {rows}")
+    else:
+        lines.append("<i>Belum ada item yang dibuang.</i>")
+    return "\n".join(lines)
 
 
 def gold_hours_menu(current: int) -> str:

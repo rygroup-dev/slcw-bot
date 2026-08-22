@@ -21,12 +21,40 @@ class KeyboardTests(unittest.TestCase):
                          "wallet:list", "nav:control", "nav:vault"):
             self.assertIn(expected, callbacks)
 
+    def test_the_economy_menu_carries_the_discard_switch(self):
+        callbacks = self._callbacks(ui.economy_menu())
+        self.assertIn("ctl:toggle_discard", callbacks)
+
+    def test_turning_the_discard_switch_on_is_never_one_tap(self):
+        """It is the only switch in the menu that destroys anything, so the ON
+        direction goes through a confirmation the way a key export does. The OFF
+        direction is always safe and stays a single tap."""
+        confirm = self._callbacks(ui.discard_confirm_menu())
+        self.assertIn("ctl:discardgo", confirm)
+        self.assertIn("nav:economy", confirm)
+
+    def test_the_discard_label_reports_the_state_it_is_in(self):
+        self.assertIn("Buang sampah: OFF", ui.economy_menu(discard_junk=False))
+        self.assertIn("Buang sampah: ON", ui.economy_menu(discard_junk=True))
+
+    def test_the_discard_help_says_what_is_protected(self):
+        text = ui.discard_help({})
+        for promise in ("equipment", "imperial seal", "quest clan"):
+            self.assertIn(promise, text)
+        self.assertIn("Belum ada item yang dibuang", text)
+
+    def test_the_discard_help_reports_what_it_already_cost(self):
+        text = ui.discard_help({"frogslime": 61, "aerocore": 2})
+        self.assertIn("63 item", text)
+        self.assertIn("frogslime ×61", text)
+
     def test_every_callback_uses_a_routed_namespace(self):
         routed = {"nav", "ctl", "wallet", "vault"}
         from slcw.keys import Candidate
         markups = [
             ui.main_menu(),
             ui.economy_menu(),
+            ui.discard_confirm_menu(),
             ui.control_menu(0, 3, True),
             ui.wallet_list([{"id": "wallet-01", "nickname": "n"}], {}),
             ui.wallet_detail("wallet-01", False),
