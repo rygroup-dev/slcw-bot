@@ -506,6 +506,38 @@ Anything that returns real value at zero risk is taken before anything scored:
   removed first. The engine now does both calls — unequip, then equip — as one
   decision, so gear stops going stale in inventory.
 
+### The bag can jam shut, and only one thing opens it
+
+Measured on 2026-08-22: twenty-four of thirty wallets sat at 40/40 slots, and no
+route out existed. Monster drops carry **no market bid**, appear in **none of the
+165 crafting recipe inputs**, are **none of the 28 refining raw materials**, the
+gear shop answers `sellEquipmentItem` with "Shop stock is full" once thirty
+wallets have dumped the same t1 plate into it, and `expandInventory` is priced in
+diamonds no wallet holds. A full bag then refuses `openChests`,
+`claimInitialReward` and `upgradeEquip` — so the fighting that fills it stops
+paying out, and the wallet loops on a refusal that classifies as benign.
+
+The one sink monster drops have in the entire game is a clan quest asking for
+2,000 of a single one of them, and a quest names one item while a wallet
+accumulates thirty-one kinds.
+
+`SLCW_DISCARD_JUNK` opens `deleteInventoryItem` for exactly that jam. It is off
+by default, it is the last branch tried, and `slcw/discard.py` holds the proof an
+item has to fail before it is even a candidate:
+
+1. not equipment — gear sells back for thousands once shop stock rotates
+2. not a container — an unopened chest is loot, not clutter
+3. not a currency — imperial seals buy grades
+4. consumed by nothing — no crafting recipe, no refining input, no refined good
+5. no bid, **on a market snapshot known fresh** — a stale book cannot tell "worth
+   nothing" apart from "price never loaded", and that is the one mistake this
+   cannot take back
+
+Then the active clan quest's items are removed, and what remains is destroyed
+smallest stack first: the fewest items lost per slot recovered, and the large
+stacks a quest could actually finish are the last to go. Every deletion pushes a
+Telegram message, because it is the only action here with no undo.
+
 Two systems were checked live and found to be dead ends, on purpose rather than by
 accident: **mining quests** return a live HTTP 404 (no deployed function answers
 the name, whatever the frontend bundle implies), and **citizenship** — the gate in
@@ -780,6 +812,7 @@ See [`.env.example`](.env.example) for the annotated full list.
 | `SLCW_REST_HP_RATIO` | `0.55` | rest below this fraction of health |
 | `SLCW_GOLD_RESERVE` | `500` | gold-funded actions never spend below this |
 | `SLCW_AUTO_TRAVEL` | `true` | let the engine relocate along the production chain |
+| `SLCW_DISCARD_JUNK` | `false` | destroy drops nothing in the game can use, once the bag is full |
 | `SLCW_CLAN_ENABLED` | `true` | clan participation at all |
 | `SLCW_CLAN_DONATE_GOLD` | `false` | donate gold to the treasury (1,000 gold = 1 DKP, once a day). Off because the treasury is the leader's to distribute |
 | `SLCW_CLAN_GOLD_RESERVE` | `5000` | gold held back from any donation |

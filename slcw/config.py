@@ -153,6 +153,11 @@ class Config:
     home_location: str = field(default_factory=lambda: os.environ.get("SLCW_HOME_LOCATION", ""))
     # Let the engine relocate between gathering sites and workshop cities.
     auto_travel: bool = field(default_factory=lambda: _bool("SLCW_AUTO_TRAVEL", True))
+    # Destroy monster drops nothing in the game can use, once the bag is full
+    # and no other route out of it is left. Irreversible, so it defaults to off
+    # and every fleet that wants it has to say so — see slcw/discard.py for the
+    # five gates an item passes before it is even a candidate.
+    discard_junk: bool = field(default_factory=lambda: _bool("SLCW_DISCARD_JUNK", False))
 
     # --- clans ---------------------------------------------------------
     # Submitting quest resources spends raw drops the market has no bids for,

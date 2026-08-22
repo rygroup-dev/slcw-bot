@@ -10,6 +10,7 @@ from . import build as build_mod
 from . import farming, inventory as inv_mod, leveling, refining, world
 from . import combat as combat_mod
 from .combat import CombatMemory, monster_level, select_monster
+from . import discard as discard_mod
 from . import blackmarket as bm_mod
 from . import clan as clan_mod
 from . import evolution as evo_mod
@@ -88,6 +89,8 @@ class Decision:
     considered: list = field(default_factory=list)
     error: str = ""
     dry_run: bool = False
+    # Carried from the chosen candidate: what the call itself does not say.
+    detail: dict = field(default_factory=dict)
 
     def rationale_lines(self) -> list[str]:
         """Human-readable explanation, surfaced by the Telegram 'why' button."""
@@ -132,6 +135,7 @@ class Orchestrator:
             decision.action = chosen.action
             decision.params = chosen.params
             decision.reason = chosen.reason
+            decision.detail = chosen.detail
 
             if self.config.dry_run:
                 decision.result = {"dry_run": True}
@@ -190,6 +194,17 @@ class Orchestrator:
         if not wallet_id:
             return False
         return self.rejections.is_parked(wallet_id, action, params)
+
+    @staticmethod
+    def _quest_items(clan_context) -> tuple:
+        """Items the active clan quest wants, which are never destroyed.
+
+        A clan quest is the only sink monster drops have, so its shopping list
+        outranks the bag being full.
+        """
+        quest = (clan_context or {}).get("quest")
+        outstanding = quest.outstanding() if quest is not None else {}
+        return tuple(outstanding or ())
 
     def _free(self, wallet_id, action: str, params: dict, reason: str):
         """A free-value candidate, or None when the server just refused it.
@@ -332,6 +347,27 @@ class Orchestrator:
                     f"(tier {equip.replaces_tier} → held)")
                 if upgrade is not None:
                     return [upgrade]
+
+            # Last resort, and only ever the last: every route out of a full bag
+            # above this line has been tried and refused. Gated on a fresh
+            # market because "no bid" is the proof an item is worthless, and a
+            # stale book cannot tell that apart from a price it never loaded.
+            if self.config.discard_junk:
+                fresh = (market is not None
+                         and market.is_fresh(self.config.market_ttl_seconds))
+                junk = discard_mod.next_discard(
+                    inventory, market if fresh else None,
+                    quest_items=self._quest_items(clan_context))
+                if junk is not None:
+                    params = {"slotIndex": junk.slot_index}
+                    if not self._parked(wallet_id, "deleteInventoryItem", params):
+                        return [econ.free_candidate(
+                            "deleteInventoryItem", params,
+                            f"destroying {junk.quantity}x {junk.item_id} — "
+                            f"no bid, no recipe, no refine, and the bag is "
+                            f"{inventory.used_slots}/{inventory.max_slots}",
+                            detail={"item_id": junk.item_id,
+                                    "quantity": junk.quantity})]
 
         # A finished hunt task is gold sitting there. This one stays ahead of the
         # clan branch: it is instant, it is free, and the gold it pays is what
@@ -1003,6 +1039,9 @@ class Orchestrator:
             return self.api.open_chests(
                 session, candidate.params["chestTemplateId"],
                 candidate.params["quantity"])
+        if action == "deleteInventoryItem":
+            return self.api.delete_inventory_item(
+                session, candidate.params["slotIndex"])
         if action == "equipItem":
             return self.api.equip_item(session, candidate.params["instanceId"])
         if action == "upgradeEquip":

@@ -183,6 +183,17 @@ class GameApi:
         """
         return self._call(session, "sellEquipmentItem", {"instanceId": instance_id})
 
+    def delete_inventory_item(self, session, slot_index: int) -> dict:
+        """Destroy one inventory slot's contents. There is no undo.
+
+        Addressed by slot, not by template — the client calls
+        deleteInventoryItem({slotIndex}) from the slot the player long-pressed.
+        What is safe to pass here is decided by slcw/discard.py, never by the
+        caller.
+        """
+        return self._call(session, "deleteInventoryItem",
+                          {"slotIndex": int(slot_index)})
+
     def equip_item(self, session, instance_id: str) -> dict:
         return self._call(session, "equipItem", {"instanceId": instance_id})
 

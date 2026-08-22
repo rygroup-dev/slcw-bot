@@ -133,6 +133,9 @@ def render_env(values: dict) -> str:
               f"SLCW_FARMING_GOLD={values.get('SLCW_FARMING_GOLD', 'true')}",
               f"SLCW_FARMING_GOLD_HOURS={values.get('SLCW_FARMING_GOLD_HOURS', '8')}",
               f"SLCW_AUTO_TRAVEL={values.get('SLCW_AUTO_TRAVEL', 'true')}",
+              # Off unless a fleet asks for it: the only call the bot makes that
+              # destroys an item, with no undo and no audit trail afterwards.
+              f"SLCW_DISCARD_JUNK={values.get('SLCW_DISCARD_JUNK', 'false')}",
               "", "# --- clans ---",
               f"SLCW_CLAN_ENABLED={values.get('SLCW_CLAN_ENABLED', 'true')}",
               f"SLCW_CLAN_DONATE_GOLD={values.get('SLCW_CLAN_DONATE_GOLD', 'false')}",

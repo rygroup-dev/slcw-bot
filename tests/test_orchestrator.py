@@ -472,6 +472,86 @@ class RejectionParkingTests(unittest.TestCase):
 
 
 @patch("slcw.orchestrator.time.sleep", lambda *_: None)
+class DiscardBranchTests(unittest.TestCase):
+    """The delete branch is last in line and silent unless asked for."""
+
+    class Market:
+        def __init__(self, fresh=True):
+            self._fresh = fresh
+
+        def is_fresh(self, _ttl):
+            return self._fresh
+
+        def best_bid(self, _item):
+            return None
+
+        def best_ask(self, _item):
+            return None
+
+    def _full_bag(self):
+        from slcw import inventory as inv
+        return inv.parse_inventory({"maxSlots": 2, "slots": [
+            {"slotIndex": 0, "templateId": "frogslime",
+             "quantity": 61, "instanceId": None},
+            {"slotIndex": 1, "templateId": "spiderfang",
+             "quantity": 4, "instanceId": None}]})
+
+    def test_it_does_nothing_unless_the_fleet_asked_for_it(self):
+        orchestrator = make(config=Config(enabled=True, dry_run=False))
+        self.assertFalse(orchestrator.config.discard_junk)
+        chosen = orchestrator.build_candidates(
+            state_of(), market=self.Market(), inventory=self._full_bag(),
+            wallet_id="w1")
+        self.assertNotIn("deleteInventoryItem", [c.action for c in chosen])
+
+    def test_a_stale_market_destroys_nothing(self):
+        """No fresh book means no proof the item is worthless."""
+        orchestrator = make(
+            config=Config(enabled=True, dry_run=False, discard_junk=True))
+        chosen = orchestrator.build_candidates(
+            state_of(), market=self.Market(fresh=False),
+            inventory=self._full_bag(), wallet_id="w1")
+        self.assertNotIn("deleteInventoryItem", [c.action for c in chosen])
+
+    def _chest_bag(self, max_slots):
+        from slcw import inventory as inv
+        return inv.parse_inventory({"maxSlots": max_slots, "slots": [
+            {"slotIndex": 0, "templateId": "frogslime",
+             "quantity": 61, "instanceId": None},
+            {"slotIndex": 1, "templateId": "small_equip_chest",
+             "quantity": 1, "instanceId": None}]})
+
+    def test_a_chest_is_opened_rather_than_anything_destroyed(self):
+        """One free slot is all it takes for the non-destructive route to win."""
+        orchestrator = make(
+            config=Config(enabled=True, dry_run=False, discard_junk=True))
+        chosen = orchestrator.build_candidates(
+            state_of(), market=self.Market(), inventory=self._chest_bag(3),
+            wallet_id="w1")
+        self.assertEqual([c.action for c in chosen], ["openChests"])
+
+    def test_junk_is_destroyed_to_make_room_for_the_chest_not_instead_of_it(self):
+        """A chest pays out into a fresh slot, so a bag at 40/40 cannot open one
+        at all. Destroying the junk stack is what gets the chest opened next
+        cycle — and the chest itself is never a candidate for destruction."""
+        orchestrator = make(
+            config=Config(enabled=True, dry_run=False, discard_junk=True))
+        chosen = orchestrator.build_candidates(
+            state_of(), market=self.Market(), inventory=self._chest_bag(2),
+            wallet_id="w1")
+        self.assertEqual([c.action for c in chosen], ["deleteInventoryItem"])
+        self.assertEqual(chosen[0].params, {"slotIndex": 0})
+
+    def test_it_fires_once_nothing_else_is_left(self):
+        orchestrator = make(
+            config=Config(enabled=True, dry_run=False, discard_junk=True))
+        chosen = orchestrator.build_candidates(
+            state_of(), market=self.Market(), inventory=self._full_bag(),
+            wallet_id="w1")
+        self.assertEqual([c.action for c in chosen], ["deleteInventoryItem"])
+        self.assertEqual(chosen[0].params, {"slotIndex": 1})
+
+
 class ResolvedBattleTests(unittest.TestCase):
     """A battle the server has already decided still has to be settled.
 

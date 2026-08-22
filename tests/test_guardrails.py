@@ -77,9 +77,16 @@ class GuardrailTests(unittest.TestCase):
             self.assertFalse(guardrails.is_allowed(name), name)
 
     def test_irreversible_item_consumption_denied(self):
-        for name in ("sharpenItem", "awakenItem",
-                     "startSoulExtraction", "deleteInventoryItem"):
+        for name in ("sharpenItem", "awakenItem", "startSoulExtraction"):
             self.assertFalse(guardrails.is_allowed(name), name)
+
+    def test_deleting_items_is_allowed_but_only_behind_a_proof(self):
+        """Opened on the operator's decision, because a bag stuck at 40/40 has
+        no other way out — but the transport allowing the call is not what makes
+        it safe. slcw/discard.py is, and it is off unless the fleet asks."""
+        from slcw.config import Config
+        self.assertTrue(guardrails.is_allowed("deleteInventoryItem"))
+        self.assertFalse(Config().discard_junk)
 
     def test_the_grade_path_is_allowed_on_an_operator_decision(self):
         """evolveGrade really does spend seals for good, and it is allowed

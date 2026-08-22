@@ -123,6 +123,15 @@ class Alerts:
             f"💎 <b>{wallet_id}</b> dapat {item} ×{quantity} "
             f"(≈{value:,.0f} gold di best-bid)")
 
+    def discarded(self, wallet_id: str, reason: str) -> None:
+        """Every destroyed stack is reported, without exception.
+
+        This is the one action the operator cannot undo or audit after the fact
+        — the item is simply gone from the bag — so it is never folded into the
+        dashboard the way routine actions are.
+        """
+        self.notifier.send(f"\U0001F5D1 <b>{wallet_id}</b> {reason}")
+
     def low_energy_idle(self, wallet_id: str) -> None:
         if self._once(f"idle:{wallet_id}"):
             self.notifier.send(

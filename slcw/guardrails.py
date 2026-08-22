@@ -85,6 +85,20 @@ ALLOWED_CALLABLES = frozenset({
     # before it will even submit. This sells to the shop at a server-set price.
     "sellEquipmentItem",
 
+    # --- destroys items, deliberately, under a proof ---------------------
+    # The only irreversible thing the bot does to an item, opened on the
+    # operator's decision after 24 of 30 wallets jammed at 40/40 slots with no
+    # way out: monster drops carry no bid, feed no recipe, refine into nothing,
+    # the gear shop's stock is full, and expandInventory is priced in diamonds
+    # no wallet has. A full bag then refuses openChests, claimInitialReward and
+    # upgradeEquip, so the fighting that fills it stops paying.
+    #
+    # Signature is deleteInventoryItem({slotIndex}) — a slot, not a template.
+    # What may be destroyed is decided in slcw/discard.py against five gates and
+    # a fresh market, never here, and the whole branch is off unless
+    # SLCW_DISCARD_JUNK says otherwise.
+    "deleteInventoryItem",
+
     # --- free bookkeeping ------------------------------------------------
     # Recomputes the referral tree's cumulative levels and pays gold for the
     # difference; the reply carries `goldRewarded`. Costs nothing and binds
@@ -252,7 +266,6 @@ DENIED_CALLABLES = {
     "sharpenItem": "consumes materials, outcome not modelled",
     "awakenItem": "consumes materials, outcome not modelled",
     "startSoulExtraction": "consumes items irreversibly",
-    "deleteInventoryItem": "destroys items",
 
     # --- risk or loss not modelled ----------------------------------------
     "joinArenaQueue": "no reward or loss model",

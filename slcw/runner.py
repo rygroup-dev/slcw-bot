@@ -21,6 +21,7 @@ from .auth import AuthError, SessionManager
 from .config import DATA, Config
 from .market import MarketSnapshot
 from . import clan as clan_mod
+from . import discard as discard_mod
 from .orchestrator import Orchestrator
 from .transport import ApiError, Transport, TransportError
 from .vault import SLEEP_HOURS_RANGE
@@ -556,6 +557,16 @@ class Fleet:
 
         if decision.action == "blocked" and decision.error:
             self.alerts.guardrail(status.wallet_id, decision.error)
+
+        if (decision.action == "deleteInventoryItem"
+                and not decision.error and not decision.dry_run):
+            # Written down before it is announced: the Telegram message can be
+            # lost, muted or scrolled past, and this is the only record that the
+            # item ever existed.
+            discard_mod.record(
+                status.wallet_id, decision.detail.get("item_id", "?"),
+                decision.detail.get("quantity", 0))
+            self.alerts.discarded(status.wallet_id, decision.reason)
 
         if decision.action == "idle" and "no profitable action" in decision.reason:
             self.alerts.low_energy_idle(status.wallet_id)

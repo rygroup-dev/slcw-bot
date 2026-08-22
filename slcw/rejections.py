@@ -48,6 +48,7 @@ PARKABLE = frozenset({
     "spendAttributePoints",
     "completeNewbieQuest",
     "sellEquipmentItem",
+    "deleteInventoryItem",
     "executeBlackMarketOrder",
     "purchaseImperialSeal",
     "payCityEntryFee",

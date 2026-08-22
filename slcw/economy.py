@@ -87,6 +87,10 @@ class ActionScore:
     score: float = 0.0
     reason: str = ""
     degraded: bool = False
+    # Anything the executor needs that the server call itself must not carry.
+    # deleteInventoryItem takes a slot index, so the params say nothing about
+    # what was in it — and what was in it is the whole audit trail.
+    detail: dict = field(default_factory=dict)
 
     @property
     def net_gold(self) -> float:
@@ -358,11 +362,13 @@ def relax_candidate(state) -> ActionScore:
     )
 
 
-def free_candidate(action: str, params: dict, reason: str) -> ActionScore:
+def free_candidate(action: str, params: dict, reason: str,
+                   detail: dict | None = None) -> ActionScore:
     """Actions that cost nothing and return earned value are always taken first."""
     return ActionScore(
         action=action, params=params, gold_equivalent=INFINITE,
         duration_seconds=1.0, score=INFINITE, reason=reason,
+        detail=detail or {},
     )
 
 
