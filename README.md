@@ -6,7 +6,7 @@
 
 [![tests](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml/badge.svg)](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml)
 [![python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab?logo=python&logoColor=white)](https://www.python.org/)
-[![tests](https://img.shields.io/badge/tests-753%20passing-4c1)](tests/)
+[![tests](https://img.shields.io/badge/tests-764%20passing-4c1)](tests/)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 Every action is priced in gold-per-hour before it runs.
@@ -354,9 +354,16 @@ nothing anywhere reported a problem.
 So a wallet in a clan with an outstanding quest fights for the item instead of
 for the money. The monster is chosen from measured drops only, since drop tables
 are server-side and a guess sends a wallet to grind something that drops nothing,
-and among monsters that supply it at a similar rate the easiest one wins — the
-same frog exists at level 1 and level 13 at 1.48 and 1.55 items a fight, and the
-level-1 one is strictly better to fight.
+and among monsters that supply it at a similar rate the easiest one wins.
+
+"Easiest" has a floor, which cost half an hour to learn. Combat is gated from
+below as well as above: `startBattle` answers *"Monster level is outside your
+reach"* for anything more than five levels under the character, and that refusal
+classifies as benign. The first version of this errand sent seven level-15
+wallets at a level-1 frog, and they reported no error at all while collecting
+nothing — the same failure shape as everything else on this page. The frog
+exists at levels 1, 7, 13, 19 and 26; a level-15 character fights the level-13
+one.
 
 The errand outranks the hunt task chain, which is not free: the chain pays 1,700
 gold a task and a wallet on the errand earns none of it. It is still the right

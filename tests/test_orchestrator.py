@@ -233,15 +233,18 @@ class SelectionTests(unittest.TestCase):
     def test_hunting_uses_learned_xp_once_the_monster_has_been_fought(self):
         api = FakeApi()
         orchestrator = make(api=api)
+        # Within reach of the level-15 fixture: the server refuses anything
+        # more than five levels down, so a level-1 monster could never be the
+        # answer here whatever the memory says about it.
         orchestrator.combat.record_battle(
-            "forestspider_lvl1_2", {"winner": "player", "xp": 40}, turns=3, damage_taken=5)
+            "bigfrog_lvl13_2", {"winner": "player", "xp": 40}, turns=3, damage_taken=5)
         # Deterministic: never explore an untried monster, so the only
-        # measured one (forestspider, just recorded above) is always picked.
+        # measured one (the frog, just recorded above) is always picked.
         orchestrator.rng.random = lambda: 1.0
         state = state_of(currentLocationId="farm_1", energy=50, balance=1000)
         candidates = orchestrator.build_candidates(state)
         hunt = next(c for c in candidates if c.action == "startHunting")
-        self.assertEqual(hunt.params["monsterId"], "forestspider_lvl1_2")
+        self.assertEqual(hunt.params["monsterId"], "bigfrog_lvl13_2")
         self.assertAlmostEqual(hunt.gold_equivalent,
                                40 * econ.HUNTING_YIELD_RATIO * econ.DEFAULT_XP_GOLD)
 

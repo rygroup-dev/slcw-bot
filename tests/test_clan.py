@@ -984,16 +984,19 @@ class QuestFarmingTests(unittest.TestCase):
         ctx.update(over)
         return ctx
 
-    def _orch(self, taught="bigfrog_lvl1_1", config=None):
+    def _orch(self, taught="bigfrog_lvl7_2", config=None):
         """An orchestrator that knows a frog drops frogslime — and knows a
         richer monster too, so ordinary value-based choice would pick the other
         one. Without that second monster this test would pass on the frog by
         default and prove nothing."""
         from tests.test_orchestrator import make, FakeApi
         orch = make(config=config or self._config(), api=FakeApi())
+        # Never explore an untried monster, so ordinary choice is decided by
+        # value alone and this test is not a coin toss.
+        orch.rng.random = lambda: 1.0
         for _ in range(6):
             orch.combat.record_battle(
-                "icewolf_lvl2_3", {"winner": "player", "xp": 500, "items": []}, 3, 4)
+                "troll_lvl11_1", {"winner": "player", "xp": 500, "items": []}, 3, 4)
         if taught:
             for _ in range(6):
                 orch.combat.record_battle(
@@ -1022,18 +1025,18 @@ class QuestFarmingTests(unittest.TestCase):
     def test_a_member_holding_none_of_it_goes_and_fights_for_it(self):
         errand = self._errand()
         self.assertIsNotNone(errand)
-        self.assertEqual(errand.params["monsterId"], "bigfrog_lvl1_1")
+        self.assertEqual(errand.params["monsterId"], "bigfrog_lvl7_2")
         self.assertIn("frogslime", errand.reason)
 
     def test_the_errand_beats_the_richer_monster_ordinary_choice_prefers(self):
-        """icewolf pays 500 xp a fight and drops no frogslime. The quest still
+        """The troll pays 500 xp a fight and drops no frogslime. The quest still
         wins, because 3,500 clan XP buys twenty-five seats and xp at the level
         cap buys nothing."""
         ordinary = self._candidates(clan_ctx={"membership": clan.ClanMembership(),
                                               "quest": None})
         picked = [c.params.get("monsterId") for c in ordinary if c.action == "battle"]
-        self.assertNotIn("bigfrog_lvl1_1", picked)
-        self.assertEqual(self._errand().params["monsterId"], "bigfrog_lvl1_1")
+        self.assertNotIn("bigfrog_lvl7_2", picked)
+        self.assertEqual(self._errand().params["monsterId"], "bigfrog_lvl7_2")
 
     def test_holding_the_item_submits_it_instead_of_fighting_for_more(self):
         cands = self._candidates(holdings={"frogslime": 12})
@@ -1065,6 +1068,22 @@ class QuestFarmingTests(unittest.TestCase):
         """battle is gated to combat zones server-side, and that refusal reads
         as benign — offering it from a city burns the cycle silently."""
         self.assertIsNone(self._errand(state=self._state(currentLocationId="city_1")))
+
+    def test_a_source_out_of_reach_is_not_the_answer(self):
+        """startBattle refuses anything more than five levels down — "Monster
+        level is outside your reach" — and that refusal reads as benign. The
+        first version of this errand sent seven level-15 wallets at a level-1
+        frog and they reported no error for half an hour while collecting
+        nothing at all."""
+        self.assertIsNone(self._errand(orch=self._orch(taught="bigfrog_lvl1_1")))
+
+    def test_the_reachable_source_wins_over_the_easier_one(self):
+        orch = self._orch(taught="bigfrog_lvl1_1")
+        for _ in range(6):
+            orch.combat.record_battle(
+                "bigfrog_lvl7_2", {"winner": "player", "xp": 1,
+                                   "items": [{"id": "frogslime", "quantity": 1}]}, 3, 4)
+        self.assertEqual(self._errand(orch=orch).params["monsterId"], "bigfrog_lvl7_2")
 
     def test_the_errand_stops_with_the_clan_feature(self):
         self.assertIsNone(self._errand(

@@ -610,7 +610,9 @@ class Orchestrator:
         # Whichever the quest still needs most, so one errand does not finish a
         # short requirement and leave a long one untouched.
         item = max(outstanding, key=lambda i: outstanding[i])
-        monster = combat_mod.best_source(item, self.combat, max_level=state.level)
+        monster = combat_mod.best_source(
+            item, self.combat, max_level=state.level,
+            min_level=state.level - combat_mod.REACH_BELOW)
         if monster is None:
             return None
         return econ.free_candidate(

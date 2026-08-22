@@ -321,11 +321,17 @@ def select_monster(catalog: list[str] | None, player_level: int,
         return None
 
     ceiling = player_level if health_ratio >= 0.8 else max(1, player_level - 2)
-    eligible = [m for m in pool if monster_level(m) <= ceiling]
+    eligible = [m for m in pool
+                if monster_level(m) <= ceiling and in_reach(m, player_level)]
     if not eligible:
         return min(pool, key=lambda m: (monster_level(m), monster_power(m)))
 
-    # Drop anything our stats say we would lose, when stats are available.
+    # Prefer anything our stats say we can survive, when stats are available —
+    # a preference, not a veto. `survivable` is deliberately crude and errs
+    # pessimistic: the fleet's real level-15 wallets have won every one of the
+    # hundreds of fights it would have refused. With the reach floor in place
+    # there is no longer a harmless level-1 monster to retreat to, so a veto
+    # here would just stop a wallet fighting at all.
     if None not in (weapon_power, physical_defense, current_health):
         safe = [m for m in eligible
                 if survivable(m, weapon_power, physical_defense, current_health)]
@@ -351,9 +357,34 @@ def select_monster(catalog: list[str] | None, player_level: int,
 # battle — and the low one wins every time: same item, shorter fight, no risk.
 SOURCE_LEVEL_TOLERANCE = 1.25
 
+# Combat has a floor as well as a ceiling. startBattle answers "Monster level
+# is outside your reach" for anything too far below the player, and that
+# refusal classifies as benign — so a wallet that keeps choosing an
+# out-of-reach monster reports no error while doing nothing at all.
+#
+# Measured on 2026-08-22, level-15 character in farm_3: level 9 refused, level
+# 10 accepted. One level was available to measure, so the rule is written as
+# the strict reading of it. A floor that is too high only passes over fights
+# that would have been legal; a floor that is too low re-creates the silent
+# loop this was found through.
+REACH_BELOW = 5
+
+
+def in_reach(monster_id: str, player_level: int) -> bool:
+    """Whether the server will let this character fight this monster.
+
+    Unknown ids pass: there is no level to judge, and refusing here would hide
+    a monster the server may well accept.
+    """
+    entry = MONSTERS.get(monster_id)
+    if entry is None:
+        return True
+    return entry[1] >= int(player_level) - REACH_BELOW
+
 
 def best_source(item: str, memory: "CombatMemory | None",
-                max_level: int | None = None) -> str | None:
+                max_level: int | None = None,
+                min_level: int | None = None) -> str | None:
     """The easiest monster measured to drop this item, or None if none has.
 
     Measured only. Drop tables are server-side, so a monster that has never
@@ -367,7 +398,10 @@ def best_source(item: str, memory: "CombatMemory | None",
     for monster_id, model in memory.models.items():
         if not model.battles:
             continue
-        if max_level is not None and monster_level(monster_id) > max_level:
+        level = monster_level(monster_id)
+        if max_level is not None and level > max_level:
+            continue
+        if min_level is not None and level < min_level:
             continue
         rate = model.avg_drops().get(item, 0.0)
         if rate > 0:

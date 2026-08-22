@@ -201,13 +201,25 @@ class SurvivabilityTests(unittest.TestCase):
         from slcw.combat import survivable
         self.assertTrue(survivable("mystery", 1, 1, 1))
 
-    def test_selection_drops_monsters_it_cannot_survive(self):
+    def test_selection_prefers_monsters_it_can_survive(self):
+        from slcw.combat import survivable
+        chosen = select_monster(
+            None, player_level=10, health_ratio=1.0,
+            weapon_power=60, physical_defense=40, current_health=200)
+        self.assertIsNotNone(chosen)
+        self.assertTrue(survivable(chosen, 60, 40, 200))
+
+    def test_a_weak_character_still_gets_a_fight_it_can_reach(self):
+        """Survivability is a preference, not a veto. It reads pessimistic —
+        the fleet's level-15 wallets have won every fight it would refuse — and
+        with a reach floor there is no harmless level-1 monster to retreat to,
+        so vetoing here would stop a wallet fighting at all."""
+        from slcw.combat import in_reach
         chosen = select_monster(
             None, player_level=10, health_ratio=1.0,
             weapon_power=6, physical_defense=18, current_health=25)
         self.assertIsNotNone(chosen)
-        from slcw.combat import survivable
-        self.assertTrue(survivable(chosen, 6, 18, 25))
+        self.assertTrue(in_reach(chosen, 10))
 
 
 class MeasuredValueTests(unittest.TestCase):
@@ -346,3 +358,83 @@ class BestSourceTests(unittest.TestCase):
         from slcw.combat import best_source
         self.assertIsNone(best_source("frogslime", None))
         self.assertIsNone(best_source("", self.memory))
+
+
+class ReachTests(unittest.TestCase):
+    """The level band the server will actually let us fight in.
+
+    There is a floor as well as a ceiling, and only the ceiling was ever
+    modelled. Measured live on 2026-08-22 with a level-15 character standing in
+    farm_3: startBattle against a level-9 monster answers "Monster level is
+    outside your reach", and level 10 starts a fight. That refusal classifies
+    as benign, so a wallet that keeps choosing an out-of-reach monster reports
+    no error at all — which is exactly what seven wallets did for half an hour
+    after the clan quest errand first shipped, before this floor existed.
+    """
+
+    def test_a_monster_five_levels_down_is_still_in_reach(self):
+        from slcw.combat import in_reach
+        self.assertTrue(in_reach("aerial_lvl10_1", 15))
+
+    def test_a_monster_six_levels_down_is_not(self):
+        from slcw.combat import in_reach
+        self.assertFalse(in_reach("icewolf_lvl9_1", 15))
+
+    def test_a_monster_at_our_own_level_is_in_reach(self):
+        from slcw.combat import in_reach
+        self.assertTrue(in_reach("bigfrog_lvl13_2", 13))
+
+    def test_an_unknown_monster_is_left_alone(self):
+        """Not in the registry means no level to judge, and refusing it here
+        would hide a monster the server might well accept."""
+        from slcw.combat import in_reach
+        self.assertTrue(in_reach("nonesuch_lvl1_1", 15))
+
+
+class SourceReachTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.memory = CombatMemory(path=Path(self.tmp.name) / "combat.json")
+        for monster in ("bigfrog_lvl1_1", "bigfrog_lvl13_2"):
+            for _ in range(10):
+                self.memory.record_battle(
+                    monster, {"winner": "player", "xp": 5,
+                              "items": [{"id": "frogslime", "quantity": 2}]}, 3, 4)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_an_out_of_reach_source_is_skipped_for_one_we_can_fight(self):
+        from slcw.combat import best_source
+        self.assertEqual(best_source("frogslime", self.memory, min_level=10),
+                         "bigfrog_lvl13_2")
+
+    def test_without_a_floor_the_easiest_source_still_wins(self):
+        from slcw.combat import best_source
+        self.assertEqual(best_source("frogslime", self.memory), "bigfrog_lvl1_1")
+
+    def test_a_floor_above_every_source_names_nothing(self):
+        from slcw.combat import best_source
+        self.assertIsNone(best_source("frogslime", self.memory, min_level=40))
+
+
+class SelectionReachTests(unittest.TestCase):
+    """Ordinary monster choice has the same floor."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.memory = CombatMemory(path=Path(self.tmp.name) / "combat.json")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_a_monster_below_the_floor_is_never_picked(self):
+        from slcw.combat import select_monster
+        for _ in range(10):
+            self.memory.record_battle(
+                "bigfrog_lvl1_1", {"winner": "player", "xp": 9_999, "items": []}, 3, 4)
+            self.memory.record_battle(
+                "aerial_lvl10_1", {"winner": "player", "xp": 1, "items": []}, 3, 4)
+        picked = {select_monster(["bigfrog_lvl1_1", "aerial_lvl10_1"], 15, 1.0,
+                                 memory=self.memory) for _ in range(20)}
+        self.assertNotIn("bigfrog_lvl1_1", picked)
