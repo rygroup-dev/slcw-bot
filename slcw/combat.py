@@ -343,3 +343,39 @@ def select_monster(catalog: list[str] | None, player_level: int,
         return max(measured, key=lambda m: expected_value(m, memory, market))
 
     return max(eligible, key=lambda m: (monster_level(m), -monster_power(m)))
+
+
+# How much better a harder monster's drop rate must be before the extra level
+# is worth paying for. Two monsters can drop the same item at nearly the same
+# rate — bigfrog at level 1 and at level 13 were measured at 1.48 and 1.55 per
+# battle — and the low one wins every time: same item, shorter fight, no risk.
+SOURCE_LEVEL_TOLERANCE = 1.25
+
+
+def best_source(item: str, memory: "CombatMemory | None",
+                max_level: int | None = None) -> str | None:
+    """The easiest monster measured to drop this item, or None if none has.
+
+    Measured only. Drop tables are server-side, so a monster that has never
+    been fought is not a candidate here however plausible its name looks;
+    guessing would send a wallet to grind something that drops nothing.
+    """
+    if memory is None or not item:
+        return None
+
+    rates: dict[str, float] = {}
+    for monster_id, model in memory.models.items():
+        if not model.battles:
+            continue
+        if max_level is not None and monster_level(monster_id) > max_level:
+            continue
+        rate = model.avg_drops().get(item, 0.0)
+        if rate > 0:
+            rates[monster_id] = rate
+    if not rates:
+        return None
+
+    best_rate = max(rates.values())
+    close = [m for m, rate in rates.items()
+             if rate * SOURCE_LEVEL_TOLERANCE >= best_rate]
+    return min(close, key=lambda m: (monster_level(m), -rates[m], m))

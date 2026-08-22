@@ -6,7 +6,7 @@
 
 [![tests](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml/badge.svg)](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml)
 [![python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab?logo=python&logoColor=white)](https://www.python.org/)
-[![tests](https://img.shields.io/badge/tests-737%20passing-4c1)](tests/)
+[![tests](https://img.shields.io/badge/tests-753%20passing-4c1)](tests/)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 Every action is priced in gold-per-hour before it runs.
@@ -337,6 +337,32 @@ forestspider_lvl1_2 · 340 rounds
 
 18% of moves stay random, which keeps the estimates honest if the monster changes
 and stops our own choices from becoming predictable.
+
+### Sometimes the drop is the point
+
+Monster choice is a price comparison: XP at its gold rate, gold, and drops at
+live market bids. That is the right question almost always, and exactly wrong
+when something other than the market wants an item.
+
+A clan quest asks for 2,000 of a single raw drop. Raw materials have no bids at
+all, so the monster that supplies them is worth zero on the only scale the
+chooser has, and it is never picked. The fleet's own quest showed what that
+costs: 471 of 2,000 frogslime after twelve hours — four an hour, every one of
+them a coincidence — against a seven-day expiry. It could not have finished, and
+nothing anywhere reported a problem.
+
+So a wallet in a clan with an outstanding quest fights for the item instead of
+for the money. The monster is chosen from measured drops only, since drop tables
+are server-side and a guess sends a wallet to grind something that drops nothing,
+and among monsters that supply it at a similar rate the easiest one wins — the
+same frog exists at level 1 and level 13 at 1.48 and 1.55 items a fight, and the
+level-1 one is strictly better to fight.
+
+The errand outranks the hunt task chain, which is not free: the chain pays 1,700
+gold a task and a wallet on the errand earns none of it. It is still the right
+trade. One quest pays 3,500 clan XP, a clan holds `5 × level + 5` members, and
+3,417 XP carries a new clan from ten seats to thirty-five — which is the
+difference between ten of the fleet's wallets in a clan and all thirty.
 
 ### Every free system gets found and used
 

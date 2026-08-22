@@ -284,3 +284,65 @@ class MeasuredValueTests(unittest.TestCase):
         self.assertEqual(model.battles, 1)
         self.assertEqual(model.drops["frogslime"], 3)
         self.assertEqual(model.avg_xp, 22)
+
+
+class BestSourceTests(unittest.TestCase):
+    """Which monster to fight when a specific item is what we are after.
+
+    Nothing else in the bot answers this question. Monster choice is driven by
+    gold-equivalent value, and a clan quest asks for raw drops that have no
+    market bids at all — so the monster that supplies them scores zero and is
+    never picked. The fleet's own clan quest sat at 471 of 2,000 frogslime on
+    2026-08-21, gaining four an hour by accident, against an expiry six days
+    out: it could not have finished.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.memory = CombatMemory(path=Path(self.tmp.name) / "combat.json")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _fight(self, monster_id, items, times=1):
+        for _ in range(times):
+            self.memory.record_battle(
+                monster_id, {"winner": "player", "xp": 10, "items": items}, 4, 5)
+
+    def test_the_monster_that_drops_it_is_named(self):
+        from slcw.combat import best_source
+        self._fight("bigfrog_lvl1_1", [{"id": "frogslime", "quantity": 2}], times=5)
+        self._fight("icewolf_lvl2_3", [{"id": "frostpelt", "quantity": 2}], times=5)
+        self.assertEqual(best_source("frogslime", self.memory), "bigfrog_lvl1_1")
+
+    def test_an_item_nothing_has_dropped_has_no_source(self):
+        from slcw.combat import best_source
+        self._fight("bigfrog_lvl1_1", [{"id": "frogslime", "quantity": 2}], times=5)
+        self.assertIsNone(best_source("imperialseal", self.memory))
+
+    def test_the_easier_monster_wins_when_the_rates_are_close(self):
+        """A level-13 frog dropping 1.55 an hour beats a level-1 frog dropping
+        1.48 on paper, and loses badly in practice: the fight is longer, the
+        damage is real, and the item is the same."""
+        from slcw.combat import best_source
+        self._fight("bigfrog_lvl13_2", [{"id": "frogslime", "quantity": 31}], times=20)
+        self._fight("bigfrog_lvl1_1", [{"id": "frogslime", "quantity": 30}], times=20)
+        self.assertEqual(best_source("frogslime", self.memory), "bigfrog_lvl1_1")
+
+    def test_a_clearly_better_source_beats_a_lower_level_one(self):
+        from slcw.combat import best_source
+        self._fight("bigfrog_lvl1_1", [{"id": "frogslime", "quantity": 1}], times=20)
+        self._fight("bigfrog_lvl13_2", [{"id": "frogslime", "quantity": 9}], times=20)
+        self.assertEqual(best_source("frogslime", self.memory), "bigfrog_lvl13_2")
+
+    def test_monsters_above_the_players_level_are_not_offered(self):
+        from slcw.combat import best_source
+        self._fight("bigfrog_lvl13_2", [{"id": "frogslime", "quantity": 9}], times=20)
+        self._fight("bigfrog_lvl1_1", [{"id": "frogslime", "quantity": 1}], times=20)
+        self.assertEqual(best_source("frogslime", self.memory, max_level=5),
+                         "bigfrog_lvl1_1")
+
+    def test_no_memory_at_all_names_nothing(self):
+        from slcw.combat import best_source
+        self.assertIsNone(best_source("frogslime", None))
+        self.assertIsNone(best_source("", self.memory))

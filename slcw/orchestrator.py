@@ -8,6 +8,7 @@ from dataclasses import dataclass, field, replace
 from . import economy as econ
 from . import build as build_mod
 from . import farming, inventory as inv_mod, leveling, refining, world
+from . import combat as combat_mod
 from .combat import CombatMemory, monster_level, select_monster
 from . import clan as clan_mod
 from .quests import NewbieQuestMemory
@@ -559,6 +560,24 @@ class Orchestrator:
                     f"{amount}x {item} to clan quest "
                     f"(pool {quest.reward_dkp_pool:,} DKP)")
 
+            # Nothing to hand in, so go and get some. Submitting was built
+            # before anything made the fleet collect: a quest asks for 2,000 of
+            # one raw drop, raw drops have no market bids, so the monster that
+            # supplies them scores zero gold and ordinary monster choice never
+            # picks it. The fleet's own quest stood at 471 of 2,000 frogslime
+            # after twelve hours — four an hour, every one of them incidental —
+            # against a seven-day window it could not have met.
+            #
+            # This is deliberately a free candidate, ahead of the hunt task
+            # chain, and the cost is real: a wallet on the errand stops earning
+            # the chain's 1,700 gold a task until the quest is done. It is
+            # bounded and it is worth it. One quest pays 3,500 clan XP, which
+            # carries a new clan from ten seats to thirty-five, and the fleet
+            # has thirty wallets waiting on exactly that.
+            errand = self._quest_errand(state, quest)
+            if errand is not None:
+                return errand
+
         if self.config.clan_donate_gold and membership.can_donate():
             reserve = max(self.config.gold_reserve, self.config.clan_gold_reserve)
             budget = self.spendable_gold(state, wallet_id)
@@ -570,6 +589,34 @@ class Orchestrator:
                     f"daily clan donation {amount:,}g "
                     f"(+{clan_mod.donation_dkp(amount)} DKP)")
         return None
+
+    def _quest_errand(self, state, quest):
+        """A battle picked for what it drops rather than what it pays.
+
+        Returns None whenever the fight itself would be a bad idea — no energy,
+        too hurt, or standing somewhere combat is refused. That refusal is
+        server-side and classifies as benign, so offering a battle from a city
+        would burn the cycle and quietly reset the error counter instead of
+        showing up as a problem.
+        """
+        outstanding = quest.outstanding()
+        if not outstanding:
+            return None
+        if (state.energy < econ.BATTLE_ENERGY
+                or state.health_ratio < BATTLE_MIN_HEALTH_RATIO
+                or state.location_id not in BATTLE_LOCATIONS):
+            return None
+
+        # Whichever the quest still needs most, so one errand does not finish a
+        # short requirement and leave a long one untouched.
+        item = max(outstanding, key=lambda i: outstanding[i])
+        monster = combat_mod.best_source(item, self.combat, max_level=state.level)
+        if monster is None:
+            return None
+        return econ.free_candidate(
+            "battle", {"monsterId": monster},
+            f"{monster} for {outstanding[item]:,} more {item} "
+            f"(clan quest, +{quest.reward_clan_xp:,} clan XP)")
 
     def _travel_candidate(self, state, market, holdings, local_best: float,
                           wallet_id: str | None = None):

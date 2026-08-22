@@ -1,3 +1,4 @@
+import math
 import datetime as _dt
 import unittest
 
@@ -932,3 +933,139 @@ class ApplicantLevelTests(unittest.TestCase):
             self.APPS, "c1", {"solana:A", "solana:B"},
             levels={"solana:A": 99, "solana:B": 1})
         self.assertEqual([a["applicationId"] for a in ranked], ["a1", "a2"])
+
+
+
+class QuestFarmingTests(unittest.TestCase):
+    """Going and getting what the quest asks for.
+
+    Submitting resources was built before anything made the fleet collect them.
+    A quest wants 2,000 of one raw drop; raw drops have no market bids, so the
+    monster that supplies them is worth zero gold and ordinary monster choice
+    never picks it. Measured on the fleet's own clan on 2026-08-21: 471 of
+    2,000 frogslime after twelve hours, four an hour, all of it incidental,
+    against a seven-day window. Without this the quest simply expires.
+
+    The errand is a free candidate, so it arrives alone and outranks the hunt
+    task chain — which is the point, because the chain never runs out and
+    anything ordered behind it is unreachable.
+    """
+
+    def _config(self, **over):
+        from slcw.config import Config
+        base = {"enabled": True, "dry_run": False}
+        base.update(over)
+        return Config(**base)
+
+    def _state(self, **over):
+        from slcw.model import parse_player
+        doc = {
+            "level": 12, "energy": 80, "maxEnergy": 100, "balance": 50_000,
+            "currentHealth": 130, "maxHealth": 130, "currentMana": 130,
+            "currentLocationId": "farm_3",
+            "attributes": {"wisdom": 3, "vitality": 3},
+            "claimedInitialRewardsV2": list(range(1, 13)),
+            "newbieQuest": 999, "activity": None,
+            "freeEnergyRefillsToday": 3, "lastFreeEnergyRefillDate": "2099-01-01",
+        }
+        doc.update(over)
+        return parse_player(doc)
+
+    def _clan(self, **over):
+        ctx = {
+            "membership": clan.ClanMembership(
+                clan_id="c1", role="member", dkp=0),
+            "quest": clan.parse_quest({
+                "requirements": [{"itemId": "frogslime", "required": 2_000,
+                                  "collected": 471}],
+                "rewardDkpPool": 1_000, "rewardClanXp": 3_500,
+                "completedAt": None}, quest_id="q1"),
+        }
+        ctx.update(over)
+        return ctx
+
+    def _orch(self, taught="bigfrog_lvl1_1", config=None):
+        """An orchestrator that knows a frog drops frogslime — and knows a
+        richer monster too, so ordinary value-based choice would pick the other
+        one. Without that second monster this test would pass on the frog by
+        default and prove nothing."""
+        from tests.test_orchestrator import make, FakeApi
+        orch = make(config=config or self._config(), api=FakeApi())
+        for _ in range(6):
+            orch.combat.record_battle(
+                "icewolf_lvl2_3", {"winner": "player", "xp": 500, "items": []}, 3, 4)
+        if taught:
+            for _ in range(6):
+                orch.combat.record_battle(
+                    taught, {"winner": "player", "xp": 1,
+                             "items": [{"id": "frogslime", "quantity": 2}]}, 3, 4)
+        return orch
+
+    def _candidates(self, orch=None, state=None, holdings=None, clan_ctx=None):
+        orch = orch or self._orch()
+        return orch.build_candidates(
+            state if state is not None else self._state(),
+            holdings=holdings if holdings is not None else {},
+            include_travel=False, wallet_id="w1",
+            clan_context=clan_ctx if clan_ctx is not None else self._clan())
+
+    def _errand(self, **kw):
+        """The quest errand, or None: a lone free battle for the quest item."""
+        cands = self._candidates(**kw)
+        if len(cands) != 1:
+            return None
+        only = cands[0]
+        if only.action != "battle" or not math.isinf(only.score):
+            return None
+        return only
+
+    def test_a_member_holding_none_of_it_goes_and_fights_for_it(self):
+        errand = self._errand()
+        self.assertIsNotNone(errand)
+        self.assertEqual(errand.params["monsterId"], "bigfrog_lvl1_1")
+        self.assertIn("frogslime", errand.reason)
+
+    def test_the_errand_beats_the_richer_monster_ordinary_choice_prefers(self):
+        """icewolf pays 500 xp a fight and drops no frogslime. The quest still
+        wins, because 3,500 clan XP buys twenty-five seats and xp at the level
+        cap buys nothing."""
+        ordinary = self._candidates(clan_ctx={"membership": clan.ClanMembership(),
+                                              "quest": None})
+        picked = [c.params.get("monsterId") for c in ordinary if c.action == "battle"]
+        self.assertNotIn("bigfrog_lvl1_1", picked)
+        self.assertEqual(self._errand().params["monsterId"], "bigfrog_lvl1_1")
+
+    def test_holding_the_item_submits_it_instead_of_fighting_for_more(self):
+        cands = self._candidates(holdings={"frogslime": 12})
+        self.assertEqual([c.action for c in cands], ["submitQuestResources"])
+
+    def test_a_finished_quest_sends_nobody_hunting(self):
+        quest = clan.parse_quest({
+            "requirements": [{"itemId": "frogslime", "required": 2_000,
+                              "collected": 2_000}],
+            "rewardDkpPool": 1_000, "rewardClanXp": 3_500,
+            "completedAt": None}, quest_id="q1")
+        self.assertIsNone(self._errand(clan_ctx=self._clan(quest=quest)))
+
+    def test_a_wallet_outside_the_clan_is_not_conscripted(self):
+        self.assertIsNone(self._errand(
+            clan_ctx={"membership": clan.ClanMembership(),
+                      "quest": self._clan()["quest"]}))
+
+    def test_nothing_measured_to_drop_it_means_no_errand(self):
+        self.assertIsNone(self._errand(orch=self._orch(taught=None)))
+
+    def test_a_hurt_wallet_rests_rather_than_grinding(self):
+        self.assertIsNone(self._errand(state=self._state(currentHealth=20)))
+
+    def test_an_exhausted_wallet_is_not_sent_out(self):
+        self.assertIsNone(self._errand(state=self._state(energy=0)))
+
+    def test_a_wallet_away_from_the_fighting_does_not_pretend_to_fight(self):
+        """battle is gated to combat zones server-side, and that refusal reads
+        as benign — offering it from a city burns the cycle silently."""
+        self.assertIsNone(self._errand(state=self._state(currentLocationId="city_1")))
+
+    def test_the_errand_stops_with_the_clan_feature(self):
+        self.assertIsNone(self._errand(
+            orch=self._orch(config=self._config(clan_enabled=False))))
