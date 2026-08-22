@@ -175,3 +175,46 @@ def next_equip(inventory: Inventory, equipment: dict,
                                    tier_of(best.template_id) - best.replaces_tier):
             best = action
     return best
+
+
+@dataclass
+class SaleAction:
+    instance_id: str
+    template_id: str
+    tier: int
+
+
+def next_sale(inventory: Inventory, equipment: dict, grade: int | None = None,
+              parked: set | None = None) -> SaleAction | None:
+    """Best piece of gear to sell back, or None to keep everything.
+
+    Measured on 2026-08-22: one plate_greaves_t2 paid 8,948 gold, tax 0, with
+    the premium balance untouched. The fleet was sitting on 56 t2 pieces across
+    thirty wallets — around half a million gold and 56 inventory slots — and
+    every wallet is grade 1, so not one of those pieces can ever be worn.
+
+    Two things are sellable. Gear above the character's grade is the clear case:
+    it is unwearable until the grade rises, which needs imperial seals nobody
+    has. Spare gear at or below the grade is only sold once the bag is nearly
+    full, because until then keeping it costs nothing and it might yet be worn.
+    Whatever `next_equip` would put on is never offered.
+    """
+    parked = parked or set()
+    keep = next_equip(inventory, equipment, grade)
+    keep_id = keep.instance_id if keep else None
+    worn_ids = {piece.get("instanceId") for piece in (equipment or {}).values()
+                if isinstance(piece, dict)}
+    ceiling = max(1, int(grade or 1))
+
+    best: SaleAction | None = None
+    for piece in inventory.equippables():
+        if piece.instance_id in worn_ids or piece.instance_id == keep_id:
+            continue
+        if piece.template_id in parked:
+            continue
+        tier = tier_of(piece.template_id)
+        if tier <= ceiling and not inventory.is_nearly_full:
+            continue
+        if best is None or tier > best.tier:
+            best = SaleAction(piece.instance_id, piece.template_id, tier)
+    return best

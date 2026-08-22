@@ -149,6 +149,16 @@ class GameApi:
         return self._call(session, "openChests", {
             "chestTemplateId": chest_template_id, "quantity": quantity})
 
+    def sell_equipment_item(self, session, instance_id: str) -> dict:
+        """Sell one piece of gear back to the Black Market for gold.
+
+        Measured 2026-08-22: 8,948 gold for a plate_greaves_t2, taxAmount 0,
+        premium balance untouched, and it works from anywhere — no travel to a
+        city required. Refused for gear that is equipped, upgraded, or carries
+        slots, and refused per item type once the shop's stock of it is full.
+        """
+        return self._call(session, "sellEquipmentItem", {"instanceId": instance_id})
+
     def equip_item(self, session, instance_id: str) -> dict:
         return self._call(session, "equipItem", {"instanceId": instance_id})
 

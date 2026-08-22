@@ -343,3 +343,162 @@ class CraftingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _inv(*pieces, max_slots=40):
+    """An inventory of equipment pieces: (templateId, instanceId)."""
+    return inv.parse_inventory({
+        "maxSlots": max_slots,
+        "slots": [{"slotIndex": i, "templateId": t, "quantity": 1, "instanceId": iid}
+                  for i, (t, iid) in enumerate(pieces)],
+    })
+
+
+class SaleTests(unittest.TestCase):
+    """Selling gear back to the Black Market.
+
+    Measured on 2026-08-22: sellEquipmentItem({instanceId}) paid 8,948 gold for
+    one plate_greaves_t2, tax 0, premium balance untouched. The fleet was
+    holding 56 t2 pieces across thirty wallets — roughly half a million gold,
+    and 56 inventory slots, sitting still. Every wallet is grade 1, so none of
+    that gear can ever be worn.
+    """
+
+    def test_gear_the_grade_can_never_wear_is_sold(self):
+        sale = inv.next_sale(_inv(("plate_greaves_t2", "i1")), {}, grade=1)
+        self.assertIsNotNone(sale)
+        self.assertEqual(sale.instance_id, "i1")
+        self.assertEqual(sale.template_id, "plate_greaves_t2")
+
+    def test_the_richest_piece_goes_first(self):
+        sale = inv.next_sale(
+            _inv(("plate_greaves_t2", "i1"), ("plate_greaves_t3", "i2")), {}, grade=1)
+        self.assertEqual(sale.instance_id, "i2")
+
+    def test_wearable_gear_is_kept_while_there_is_room(self):
+        """A piece we would equip must never be sold out from under us."""
+        self.assertIsNone(inv.next_sale(_inv(("plate_greaves_t1", "i1")), {}, grade=1))
+
+    def test_a_spare_is_sold_once_the_bag_is_nearly_full(self):
+        worn = {"gauntlets": {"instanceId": "worn", "templateId": "plate_greaves_t1"}}
+        full = _inv(*[(f"copper_ore", f"x{i}") for i in range(38)],
+                    ("plate_greaves_t1", "spare"), max_slots=40)
+        full.slots.append(inv.Slot(index=39, template_id="plate_greaves_t1",
+                                   quantity=1, instance_id="spare2"))
+        sale = inv.next_sale(full, worn, grade=1)
+        self.assertIsNotNone(sale)
+        self.assertIn(sale.instance_id, {"spare", "spare2"})
+
+    def test_the_piece_we_are_wearing_is_never_sold(self):
+        worn = {"gauntlets": {"instanceId": "i1", "templateId": "plate_greaves_t2"}}
+        self.assertIsNone(inv.next_sale(_inv(("plate_greaves_t2", "i1")), worn, grade=1))
+
+    def test_a_template_the_shop_will_not_take_is_skipped(self):
+        """"Shop stock is full for this item" is about the item type, not the
+        instance — trying the next identical piece just burns another cycle."""
+        sale = inv.next_sale(
+            _inv(("plate_greaves_t2", "i1"), ("plate_boots_t2", "i2")), {}, grade=1,
+            parked={"plate_greaves_t2"})
+        self.assertEqual(sale.instance_id, "i2")
+
+    def test_nothing_sellable_yields_nothing(self):
+        self.assertIsNone(inv.next_sale(_inv(("copper_ore", None)), {}, grade=1))
+
+
+class SaleDecisionTests(unittest.TestCase):
+    """The sale as the decision loop sees it."""
+
+    def _state(self, grade=1, **over):
+        doc = {
+            "level": 15, "energy": 80, "maxEnergy": 100, "balance": 30_000,
+            "currentHealth": 130, "currentMana": 130, "currentLocationId": "farm_3",
+            "attributes": {"wisdom": 3, "vitality": 3}, "grade": grade,
+            "claimedInitialRewardsV2": list(range(1, 16)),
+            "newbieQuest": 999, "activity": None,
+            "freeEnergyRefillsToday": 3, "lastFreeEnergyRefillDate": "2099-01-01",
+        }
+        doc.update(over)
+        return parse_player(doc)
+
+    def _actions(self, inventory, orch=None):
+        orch = orch or make()
+        return [c.action for c in orch.build_candidates(
+            self._state(), inventory=inventory, include_travel=False,
+            wallet_id="w1")]
+
+    def test_unwearable_gear_is_offered_for_sale(self):
+        self.assertIn("sellEquipmentItem", self._actions(_inv(("plate_greaves_t2", "i1"))))
+
+    def test_wearing_it_comes_before_selling_it(self):
+        actions = self._actions(_inv(("plate_greaves_t1", "i1")))
+        self.assertNotIn("sellEquipmentItem", actions)
+        self.assertIn("equipItem", actions)
+
+    def test_the_sale_carries_the_template_as_well_as_the_instance(self):
+        orch = make()
+        chosen = orch.build_candidates(
+            self._state(), inventory=_inv(("plate_greaves_t2", "i1")),
+            include_travel=False, wallet_id="w1")[0]
+        self.assertEqual(chosen.params,
+                         {"instanceId": "i1", "templateId": "plate_greaves_t2"})
+
+    def test_a_full_shop_takes_the_whole_template_out_of_play(self):
+        """The refusal is about the item type, so parking one instance would
+        just offer the next identical piece next cycle."""
+        orch = make()
+        orch.rejections.park("w1", "sellEquipmentItem",
+                             {"templateId": "plate_greaves_t2"},
+                             "Shop stock is full for this item")
+        actions = self._actions(_inv(("plate_greaves_t2", "i1")), orch=orch)
+        self.assertNotIn("sellEquipmentItem", actions)
+
+    def test_a_stock_refusal_parks_the_template(self):
+        api = FakeApi()
+        api.fail_with = ("sellEquipmentItem", "FAILED_PRECONDITION",
+                         "Shop stock is full for this item")
+        orch = make(api=api)
+        state = self._state()
+        orch.decide_and_act({"id": "w1"}, None, state,
+                            inventory=_inv(("plate_greaves_t2", "i1")))
+        self.assertTrue(orch.rejections.is_parked(
+            "w1", "sellEquipmentItem", {"templateId": "plate_greaves_t2"}))
+
+    def test_an_upgraded_piece_parks_only_itself(self):
+        api = FakeApi()
+        api.fail_with = ("sellEquipmentItem", "FAILED_PRECONDITION",
+                         "Cannot sell upgraded or slotted items to the Black Market")
+        orch = make(api=api)
+        orch.decide_and_act({"id": "w1"}, None, self._state(),
+                            inventory=_inv(("plate_greaves_t2", "i1")))
+        self.assertFalse(orch.rejections.is_parked(
+            "w1", "sellEquipmentItem", {"templateId": "plate_greaves_t2"}))
+        self.assertTrue(orch.rejections.is_parked(
+            "w1", "sellEquipmentItem",
+            {"instanceId": "i1", "templateId": "plate_greaves_t2"}))
+
+    def test_the_sale_reaches_the_api(self):
+        api = FakeApi()
+        orch = make(api=api)
+        orch.decide_and_act({"id": "w1"}, None, self._state(),
+                            inventory=_inv(("plate_greaves_t2", "i1")))
+        self.assertIn("sellEquipmentItem", [c[0] for c in api.calls])
+
+
+class SaleLedgerTests(unittest.TestCase):
+    """A sale is gold earned, and gold earned belongs in the ledger.
+
+    One t2 piece paid 8,948 — more than five hunt tasks. Left unrecorded it
+    would be the fleet's largest invisible income.
+    """
+
+    def test_the_revenue_is_recorded(self):
+        from slcw import ledger
+        summary = ledger._extract_summary("sellEquipmentItem", {
+            "success": True, "sellPrice": 8948, "taxAmount": 0,
+            "playerRevenue": 8948, "templateId": "plate_greaves_t2"})
+        self.assertEqual(summary["gold"], 8948)
+        self.assertEqual(summary["item"], "plate_greaves_t2")
+
+    def test_a_reply_without_revenue_records_nothing(self):
+        from slcw import ledger
+        self.assertEqual(ledger._extract_summary("sellEquipmentItem", {"success": True}), {})

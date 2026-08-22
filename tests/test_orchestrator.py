@@ -44,6 +44,9 @@ class FakeApi:
         return self._record("openChests", chestTemplateId=chest_template_id,
                             quantity=quantity)
 
+    def sell_equipment_item(self, session, instance_id):
+        return self._record("sellEquipmentItem", instanceId=instance_id)
+
     def start_relax(self, session):
         return self._record("startRelax")
 

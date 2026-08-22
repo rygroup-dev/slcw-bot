@@ -41,6 +41,17 @@ ALLOWED_CALLABLES = frozenset({
     # action, so this is among the most valuable calls in the game.
     "refillEnergyFree",
 
+    # --- selling gear back, gold in and a slot freed --------------------
+    # Measured live on 2026-08-22 before allowlisting, which is what this list
+    # asks for: one plate_greaves_t2 paid 8,948 gold with taxAmount 0, the
+    # premium balance stayed at 0.0 across the call, and it worked from farm_3
+    # with no travel to a city. Gold in, one slot freed, nothing spent.
+    #
+    # It is not createMarketOrder, which stays denied below: that one is a
+    # trade with other players and the client checks premium_balance >= 1
+    # before it will even submit. This sells to the shop at a server-set price.
+    "sellEquipmentItem",
+
     # --- quests and tasks, free to run and to claim ---------------------
     "getTaskStatus",
     "acceptTask",

@@ -6,7 +6,7 @@
 
 [![tests](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml/badge.svg)](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml)
 [![python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab?logo=python&logoColor=white)](https://www.python.org/)
-[![tests](https://img.shields.io/badge/tests-764%20passing-4c1)](tests/)
+[![tests](https://img.shields.io/badge/tests-780%20passing-4c1)](tests/)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 Every action is priced in gold-per-hour before it runs.
@@ -337,6 +337,36 @@ forestspider_lvl1_2 · 340 rounds
 
 18% of moves stay random, which keeps the estimates honest if the monster changes
 and stops our own choices from becoming predictable.
+
+### Gear it can never wear is not an asset
+
+Every wallet in this fleet is grade 1, and a piece of equipment needs a grade at
+least equal to its tier. So t2 gear drops, goes into the bag, and stays there —
+unwearable, unsellable through the player market (that one wants premium
+currency nobody has), and occupying a slot in a bag of forty. Sixteen of thirty
+wallets were at 39 or 40 slots.
+
+The Black Market buys it. `sellEquipmentItem` was measured before it was
+allowlisted: **8,948 gold for one plate_greaves_t2**, tax zero, premium balance
+untouched, no travel required. The fleet was holding 56 t2 pieces — roughly half
+a million gold, and 56 slots, sitting still. For scale, a hunt task pays 1,700.
+
+What it will not take is worth knowing, because both refusals are benign and
+therefore silent:
+
+| Refusal | Scope | What it means |
+|---|---|---|
+| `Shop stock is full for this item` | the **item type** | The shop holds a limited stock of each template. Common t1 gear is usually full. |
+| `Cannot sell upgraded or slotted items` | the **piece** | Levelled, bonus-rolled or slotted gear is out; plain pieces only. |
+
+The two are parked at different scopes on purpose. Parking one full-shop
+template by its instance id would simply offer the next identical piece on the
+next cycle, and the one after that on the cycle after — a refusal turned into a
+loop, which is the failure this codebase keeps finding.
+
+Gear at or below the grade is kept while there is room, since it may yet be worn,
+and offered only once the bag is nearly full. Whatever the equip logic would put
+on is never offered at all.
 
 ### Sometimes the drop is the point
 

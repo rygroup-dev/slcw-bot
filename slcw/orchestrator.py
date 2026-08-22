@@ -154,12 +154,33 @@ class Orchestrator:
             # dashboard still reads zero errors.
             self.rejections.park(
                 wallet["id"], decision.action, decision.params, str(exc))
+            # A full shop is a fact about the item type, so park the type as
+            # well as the piece — otherwise the next identical piece is offered
+            # on the next cycle, and the one after that on the cycle after.
+            if (decision.action == "sellEquipmentItem"
+                    and "stock" in str(exc).lower()):
+                self.rejections.park(
+                    wallet["id"], "sellEquipmentItem",
+                    {"templateId": decision.params.get("templateId", "")}, str(exc))
             # Benign or not, a refused newbie quest is a refusal: the chain is
             # item-gated, and retrying it every cycle is what starved the fleet
             # of real actions while reporting zero errors.
             if decision.action == "completeNewbieQuest":
                 self.quests.record_failure(wallet["id"], str(exc))
         return decision
+
+    def _unsellable(self, wallet_id, inventory) -> set:
+        """Item types the shop has refused to take, so we stop offering them.
+
+        "Shop stock is full for this item" is about the item type, not the
+        piece. Parking the one instance would only put the next identical piece
+        forward on the next cycle — which is how a refusal turns into a loop.
+        """
+        if not wallet_id:
+            return set()
+        return {piece.template_id for piece in inventory.equippables()
+                if self._parked(wallet_id, "sellEquipmentItem",
+                                {"templateId": piece.template_id})}
 
     def _parked(self, wallet_id, action: str, params: dict) -> bool:
         """Whether this exact call was refused recently and should be skipped."""
@@ -248,6 +269,19 @@ class Orchestrator:
                     return [econ.free_candidate(
                         "openChests", params,
                         f"{chest.quantity}× {chest.template_id} unopened")]
+
+            sale = inv_mod.next_sale(
+                inventory, state.equipment, state.grade,
+                parked=self._unsellable(wallet_id, inventory))
+            if sale is not None:
+                params = {"instanceId": sale.instance_id,
+                          "templateId": sale.template_id}
+                if not self._parked(wallet_id, "sellEquipmentItem", params):
+                    return [econ.free_candidate(
+                        "sellEquipmentItem", params,
+                        f"selling {sale.template_id} back "
+                        f"(grade {max(1, state.grade or 1)} cannot wear tier "
+                        f"{sale.tier}, and it costs a slot)")]
 
             equip = inv_mod.next_equip(inventory, state.equipment, state.grade)
             if equip is not None:
@@ -808,6 +842,8 @@ class Orchestrator:
         if action == "resumeBattle":
             return self.resume_battle(session, candidate.params["battleId"],
                                       candidate.params["monsterId"])
+        if action == "sellEquipmentItem":
+            return self.api.sell_equipment_item(session, candidate.params["instanceId"])
         if action == "battle":
             return self.run_battle(session, candidate.params["monsterId"])
         if action == "startTaskBattle":

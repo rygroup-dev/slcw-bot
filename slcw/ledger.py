@@ -46,6 +46,15 @@ def _extract_summary(action: str, result: dict) -> dict:
         if xp is None:
             return {}
         return {"type": "newbieQuest", "xp": int(xp)}
+    if action == "sellEquipmentItem":
+        # {"success", "sellPrice", "taxAmount", "playerRevenue", "templateId"}.
+        # No "rewardSummary" either, and at ~8,900 gold a piece this would have
+        # been the largest income the ledger could not see.
+        revenue = result.get("playerRevenue")
+        if revenue is None:
+            return {}
+        return {"type": "equipment_sale", "gold": int(revenue),
+                "item": str(result.get("templateId") or "")}
     if action == "claimTaskReward":
         # Documented in tasks.py as {goldAwarded, allTasksCompleted} — also not
         # "rewardSummary", found while checking every action against the same

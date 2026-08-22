@@ -47,6 +47,7 @@ PARKABLE = frozenset({
     "buyLevel",
     "spendAttributePoints",
     "completeNewbieQuest",
+    "sellEquipmentItem",
     "createClan",
     "applyClan",
     "resolveApplication",
