@@ -19,7 +19,8 @@ data/
 
 # ── Capture artefacts ───────────────────────────────────────────────────
 # HAR captures and downloaded frontend bundles contain session tokens and are
-# large. Findings from them belong in docs/REVERSE-ENGINEERING.md instead.
+# large. Findings from them belong in the README instead, written up rather
+# than dumped.
 *.har
 archive/
 captures/
