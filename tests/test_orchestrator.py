@@ -44,6 +44,15 @@ class FakeApi:
         return self._record("openChests", chestTemplateId=chest_template_id,
                             quantity=quantity)
 
+    def pay_city_entry_fee(self, session, city_id):
+        return self._record("payCityEntryFee", cityId=city_id)
+
+    def purchase_imperial_seal(self, session, quantity=1):
+        return self._record("purchaseImperialSeal", quantity=quantity)
+
+    def evolve_grade(self, session):
+        return self._record("evolveGrade")
+
     def sell_equipment_item(self, session, instance_id):
         return self._record("sellEquipmentItem", instanceId=instance_id)
 

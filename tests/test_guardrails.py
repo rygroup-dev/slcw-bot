@@ -34,10 +34,6 @@ class GuardrailTests(unittest.TestCase):
         with self.assertRaises(guardrails.GuardrailViolation):
             guardrails.check("skipActivityTime")
 
-    def test_denies_city_entry_fee(self):
-        with self.assertRaises(guardrails.GuardrailViolation):
-            guardrails.check("payCityEntryFee")
-
     def test_denies_arena_queue(self):
         with self.assertRaises(guardrails.GuardrailViolation):
             guardrails.check("joinArenaQueue")
@@ -81,9 +77,18 @@ class GuardrailTests(unittest.TestCase):
             self.assertFalse(guardrails.is_allowed(name), name)
 
     def test_irreversible_item_consumption_denied(self):
-        for name in ("evolveGrade", "sharpenItem", "awakenItem",
+        for name in ("sharpenItem", "awakenItem",
                      "startSoulExtraction", "deleteInventoryItem"):
             self.assertFalse(guardrails.is_allowed(name), name)
+
+    def test_the_grade_path_is_allowed_on_an_operator_decision(self):
+        """evolveGrade really does spend seals for good, and it is allowed
+        anyway: a grade-1 character is capped at level 15 and discards every
+        point of XP it earns after that. The other two were denied on wrong
+        information — purchaseImperialSeal is paid in gold, not diamonds, and
+        payCityEntryFee buys the fifty-gold door those two stand behind."""
+        for name in ("evolveGrade", "purchaseImperialSeal", "payCityEntryFee"):
+            self.assertTrue(guardrails.is_allowed(name), name)
 
     def test_unmeasured_systems_denied(self):
         for name in ("startExpedition", "joinArenaQueue", "dispatchCaravan",

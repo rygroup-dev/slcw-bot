@@ -11,6 +11,7 @@ from . import farming, inventory as inv_mod, leveling, refining, world
 from . import combat as combat_mod
 from .combat import CombatMemory, monster_level, select_monster
 from . import clan as clan_mod
+from . import evolution as evo_mod
 from .quests import NewbieQuestMemory
 from . import rejections as rejections_mod
 from .rejections import RejectionMemory
@@ -311,6 +312,16 @@ class Orchestrator:
                 "claimTaskReward", {},
                 f"task reward of {task_status.task.gold_reward:,} gold ready")]
 
+        # Raising the grade comes before anything that earns XP, because a
+        # wallet at its grade cap earns none: the ceiling is 15 x grade, and
+        # thirty wallets sat at level 15 grade 1 throwing away roughly a
+        # thousand fights' worth of XP a day. It only fires once the level gate
+        # for the next grade is already met, so it never walks a wallet across
+        # the map for something it cannot do on arrival.
+        ascend = self._evolution_candidate(state, holdings, wallet_id)
+        if ascend is not None:
+            return [ascend]
+
         # Clan actions come before the rest of the hunt chain, and the ordering is
         # the whole point. The chain never runs out — finish a task and the next
         # one is waiting — so a wallet in the Borderlands always has a task battle
@@ -492,6 +503,88 @@ class Orchestrator:
         if founder and wallet_id == founder and gold < clan_mod.CREATE_CLAN_GOLD:
             return 0
         return max(0, gold - self.config.gold_reserve)
+
+    def _evolution_candidate(self, state, holdings, wallet_id=None):
+        """Travel to Greyholm, buy the seals it is short of, and ascend.
+
+        Seals are spent for good, so the order matters: the level gate is
+        checked first, the seals are only bought once standing in the city that
+        will accept them, and the ascent is only proposed when they are already
+        in hand.
+        """
+        step = evo_mod.next_grade(state.grade)
+        if step is None:
+            return None
+        need_level, need_seals = evo_mod.REQUIREMENTS[step]
+        if state.level < need_level:
+            return None
+        # Nothing is being wasted until the ceiling is actually reached, and the
+        # seals keep indefinitely.
+        if not leveling.at_grade_cap(state.level, state.grade):
+            return None
+
+        held = int((holdings or {}).get(evo_mod.SEAL_ITEM, 0) or 0)
+        short = max(0, need_seals - held)
+        # Work out affordability before moving, not after arriving. Greyholm has
+        # no farm and no battle zone, so a wallet that travels there without the
+        # gold to finish the errand is simply a wallet that has stopped playing.
+        # Budgeted at the top of the shop's own price curve rather than today's
+        # quote, so the answer cannot go stale in transit.
+        if short and self.spendable_gold(state, wallet_id) < (
+                short * evo_mod.SEAL_BASE_PRICE * 2 + evo_mod.CITY_ENTRY_FEE):
+            return None
+
+        if state.location_id != evo_mod.CITADEL:
+            params = {"destinationId": evo_mod.CITADEL}
+            if self._parked(wallet_id, "startTravel", params):
+                return None
+            return econ.free_candidate(
+                "startTravel", params,
+                f"to {world.name_of(evo_mod.CITADEL)} for grade {step} "
+                f"(level {state.level} is the grade {state.grade} ceiling)")
+
+        if held >= need_seals:
+            if self._parked(wallet_id, "evolveGrade", {}):
+                return None
+            return econ.free_candidate(
+                "evolveGrade", {},
+                f"grade {state.grade} → {step}, lifting the level cap to "
+                f"{leveling.level_cap(step)} ({held} seals)")
+
+        city_number = evo_mod.CITADEL.rsplit("_", 1)[-1]
+        if not self._has_city_access(state, city_number):
+            params = {"cityId": city_number}
+            if not self._parked(wallet_id, "payCityEntryFee", params):
+                return econ.free_candidate(
+                    "payCityEntryFee", params,
+                    f"entry to {world.name_of(evo_mod.CITADEL)} "
+                    f"(the shop and the altar are behind it)")
+            return None
+
+        params = {"quantity": short}
+        if self._parked(wallet_id, "purchaseImperialSeal", params):
+            return None
+        return econ.free_candidate(
+            "purchaseImperialSeal", params,
+            f"{short} imperial seal(s) for grade {step} "
+            f"(holding {held} of {need_seals})")
+
+    @staticmethod
+    def _has_city_access(state, city_number: str) -> bool:
+        """Whether this city will let the wallet through its gate right now.
+
+        Citizens are always let in; everyone else holds a timed pass bought
+        with payCityEntryFee. Read from the player document rather than guessed
+        from a refusal, so no cycle is spent finding out.
+        """
+        raw = state.raw or {}
+        if (raw.get("citizenship") or {}).get(city_number):
+            return True
+        passes = raw.get("cityAccessPasses") or {}
+        try:
+            return time.time() < float(passes.get(city_number) or 0)
+        except (TypeError, ValueError):
+            return False
 
     def _clan_candidate(self, state, holdings, clan_context, wallet_id=None):
         """Free clan participation, in the order that costs the fleet least.
@@ -844,6 +937,13 @@ class Orchestrator:
         if action == "resumeBattle":
             return self.resume_battle(session, candidate.params["battleId"],
                                       candidate.params["monsterId"])
+        if action == "payCityEntryFee":
+            return self.api.pay_city_entry_fee(session, candidate.params["cityId"])
+        if action == "purchaseImperialSeal":
+            return self.api.purchase_imperial_seal(
+                session, candidate.params.get("quantity", 1))
+        if action == "evolveGrade":
+            return self.api.evolve_grade(session)
         if action == "sellEquipmentItem":
             return self.api.sell_equipment_item(session, candidate.params["instanceId"])
         if action == "battle":

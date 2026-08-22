@@ -149,6 +149,18 @@ class GameApi:
         return self._call(session, "openChests", {
             "chestTemplateId": chest_template_id, "quantity": quantity})
 
+    def pay_city_entry_fee(self, session, city_id: str) -> dict:
+        """Buy timed access to a city. `city_id` is the bare number, "17"."""
+        return self._call(session, "payCityEntryFee", {"cityId": city_id})
+
+    def purchase_imperial_seal(self, session, quantity: int = 1) -> dict:
+        """Buy Imperial Seals from the Greyholm imperial shop, paid in gold."""
+        return self._call(session, "purchaseImperialSeal", {"quantity": int(quantity)})
+
+    def evolve_grade(self, session) -> dict:
+        """Raise the character's grade at the Greyholm Altar. Takes no arguments."""
+        return self._call(session, "evolveGrade", {})
+
     def sell_equipment_item(self, session, instance_id: str) -> dict:
         """Sell one piece of gear back to the Black Market for gold.
 

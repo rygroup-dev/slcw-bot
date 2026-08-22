@@ -41,6 +41,27 @@ ALLOWED_CALLABLES = frozenset({
     # action, so this is among the most valuable calls in the game.
     "refillEnergyFree",
 
+    # --- raising the grade, which is what lifts the level ceiling --------
+    # A character cannot pass level 15 x grade, so a grade-1 wallet at level 15
+    # discards every point of XP it earns. All three of these were denied until
+    # 2026-08-22, two of them on wrong information:
+    #
+    #   purchaseImperialSeal was listed as spending diamonds. It does not: the
+    #   imperial shop checks `balance` against a gold price (base 3,500, moved
+    #   by the city warehouse; Greyholm quoted 2,883 when measured).
+    #
+    #   payCityEntryFee was listed as having no measured return. Greyholm is
+    #   `accessType: "paid_50"`, so it costs fifty gold, and what it buys is
+    #   the shop and the altar behind it.
+    #
+    #   evolveGrade does spend seals irreversibly, and that has not changed.
+    #   It is allowed on an explicit operator decision, and the decision loop
+    #   only reaches it when the level gate is already met and the seals are
+    #   already in hand — it never buys its way toward a grade it cannot take.
+    "purchaseImperialSeal",
+    "payCityEntryFee",
+    "evolveGrade",
+
     # --- selling gear back, gold in and a slot freed --------------------
     # Measured live on 2026-08-22 before allowlisting, which is what this list
     # asks for: one plate_greaves_t2 paid 8,948 gold with taxAmount 0, the
@@ -168,7 +189,6 @@ DENIED_CALLABLES = {
     "refillEnergyPaid": "spends diamonds for energy the free call also provides",
     "instantCompleteMiningQuest": "spends diamonds",
     "premiumSearchMount": "spends diamonds",
-    "purchaseImperialSeal": "spends diamonds",
     "purchaseInitialRewardsPass": "spends diamonds",
     "purchaseMiningGoldSlot": "spends diamonds",
     "purchaseStarterPack": "real-money purchase",
@@ -194,7 +214,6 @@ DENIED_CALLABLES = {
     "executeGoldMarketOrder": "fills a gold-market order",
 
     # --- gold-costed, with no measured return ----------------------------
-    "payCityEntryFee": "costs 50 or 1000 gold with no measured return",
     "renounceCitizenship": "discards a paid-for status",
     "expandInventory": "costs currency, return not measured",
     "resetPoints": "costs currency to undo attribute spending",
@@ -209,7 +228,6 @@ DENIED_CALLABLES = {
     "sharpenItem": "consumes materials, outcome not modelled",
     "awakenItem": "consumes materials, outcome not modelled",
     "startSoulExtraction": "consumes items irreversibly",
-    "evolveGrade": "consumes imperial seals irreversibly",
     "deleteInventoryItem": "destroys items",
 
     # --- risk or loss not modelled ----------------------------------------

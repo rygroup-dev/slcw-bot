@@ -6,7 +6,7 @@
 
 [![tests](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml/badge.svg)](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml)
 [![python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab?logo=python&logoColor=white)](https://www.python.org/)
-[![tests](https://img.shields.io/badge/tests-782%20passing-4c1)](tests/)
+[![tests](https://img.shields.io/badge/tests-805%20passing-4c1)](tests/)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 Every action is priced in gold-per-hour before it runs.
@@ -337,6 +337,40 @@ forestspider_lvl1_2 · 340 rounds
 
 18% of moves stay random, which keeps the estimates honest if the monster changes
 and stops our own choices from becoming predictable.
+
+### The ceiling, and the way through it
+
+A character cannot pass level `15 × grade`. Every wallet in this fleet was grade
+1 at level 15, which means every point of XP any of them earned — around a
+thousand fights a day — was discarded on arrival. Nothing reported this either;
+the wallets were winning.
+
+The way through was already half done and nobody had noticed. The newbie quest
+chain's last step pays **four Imperial Seals**, fifteen wallets were holding
+them, and grade 2 wants five. The table, read from the game's own bundle:
+
+| Grade | Level | Seals |
+|---|---|---|
+| 2 | 15 | 5 |
+| 3 | 30 | 25 |
+| 4 | 45 | 125 |
+| 5 | 60 | 625 |
+| 6 | 75 | 3,125 |
+| 7 | 90 | 15,625 |
+
+The fifth seal is bought, not farmed. `purchaseImperialSeal` is paid in **gold** —
+base 3,500, moved by how full the city warehouse is, and Greyholm quoted 2,883
+when measured. It had been sitting in the denied list labelled "spends diamonds",
+which was simply wrong, alongside `payCityEntryFee` labelled as having no
+measured return — it buys the fifty-gold door that the shop and the altar stand
+behind.
+
+`evolveGrade` is the one that really is irreversible, and it is allowed on an
+explicit decision rather than a correction. The loop earns the right to call it:
+it moves only when the level gate for the next grade is already met, it checks
+it can afford the shortfall **before** travelling rather than after arriving —
+Greyholm has no farm and no battle zone, so a wallet stranded there has simply
+stopped playing — and it proposes the ascent only with the seals already in hand.
 
 ### Gear it can never wear is not an asset
 
