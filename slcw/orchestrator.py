@@ -359,6 +359,32 @@ class Orchestrator:
                     f"next hunt task available "
                     f"({task_status.completed_count} completed)")]
 
+            # Out of position. The chain is gated to the Borderlands
+            # server-side, and it is the only gold this bot has ever actually
+            # banked — 1,700 a task, every hour it has run. Everything else the
+            # scorer can offer here is priced at market bids the bot cannot
+            # collect: nothing it is able to sell is a raw resource.
+            #
+            # That was harmless while every wallet stood in the Borderlands
+            # forever. Raising the grade broke it: a wallet that finishes at
+            # the Greyholm altar re-picks from scratch, and on 2026-08-22 the
+            # winner was a twenty-minute walk to Crystal Cave, scored at 24,084
+            # gold an hour it could never have realised.
+            if not in_borderlands and (task_status.can_fight
+                                       or task_status.can_accept):
+                home = world.nearest(state.location_id, sorted(BATTLE_LOCATIONS))
+                if home and home != state.location_id:
+                    params = {"destinationId": home}
+                    if not self._parked(wallet_id, "startTravel", params):
+                        # There may be no task yet — can_accept means the next
+                        # one is waiting to be taken, and it is taken there.
+                        reward = getattr(task_status.task, "gold_reward", 0) or 0
+                        worth = f" ({reward:,}g a task)" if reward else ""
+                        return [econ.free_candidate(
+                            "startTravel", params,
+                            f"back to {world.name_of(home)} "
+                            f"for the hunt task{worth}")]
+
         candidates = []
         stale = market is None or not market.is_fresh(self.config.market_ttl_seconds)
 

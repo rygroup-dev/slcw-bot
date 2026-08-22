@@ -6,7 +6,7 @@
 
 [![tests](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml/badge.svg)](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml)
 [![python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab?logo=python&logoColor=white)](https://www.python.org/)
-[![tests](https://img.shields.io/badge/tests-805%20passing-4c1)](tests/)
+[![tests](https://img.shields.io/badge/tests-809%20passing-4c1)](tests/)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 Every action is priced in gold-per-hour before it runs.
@@ -337,6 +337,29 @@ forestspider_lvl1_2 · 340 rounds
 
 18% of moves stay random, which keeps the estimates honest if the monster changes
 and stops our own choices from becoming predictable.
+
+### A price you cannot collect is not a price
+
+The scorer values gathering, refining and crafting at live market bids. That is
+the obvious thing to do and it is wrong here, because **nothing this bot can
+sell is a raw resource**. The player market wants premium currency no wallet
+has; the only sale it can make is `sellEquipmentItem`, and that takes finished
+gear. Every ore in the ground is priced in gold the bot has no way to reach.
+
+It never showed, because free actions always won and every wallet stood in the
+Borderlands forever. Sending wallets to Greyholm broke the spell: one that
+finishes at the altar re-picks from nothing, and the winner was a twenty-minute
+walk to Crystal Cave scored at 24,084 gold an hour — against a hunt task chain
+that pays 1,700 a task and has actually banked it, every hour, all along.
+
+So a wallet holding a hunt task it cannot advance walks back to the Borderlands,
+and that trip is a free action rather than a scored one. Not because travel is
+special, but because the gold at the end of it is real and the number it is
+competing with is not.
+
+The wider fix — pricing materials by what they can actually be turned into,
+which now that grades are rising means crafted gear the Black Market will buy —
+is still open.
 
 ### The ceiling, and the way through it
 

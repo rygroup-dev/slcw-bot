@@ -259,3 +259,91 @@ class StabilityTests(unittest.TestCase):
         self.assertEqual(orchestrator._repeats_at(
             econ.ActionScore(action="battle", energy_cost=1, duration_seconds=45),
             self._state("city_2", energy=0)), 1)
+
+
+class HuntTaskHomecomingTests(unittest.TestCase):
+    """Getting back to where the gold is.
+
+    The hunt task chain is the fleet's one measured gold income — 1,700 a task,
+    and it has paid out every hour the bot has run. Fighting it is gated to the
+    Borderlands server-side, so a wallet anywhere else cannot advance it at all.
+
+    That never mattered while every wallet stood in farm_3 forever. It started
+    mattering on 2026-08-22, when raising the grade began sending wallets to
+    Greyholm: a wallet that finishes there re-picks from scratch, and what wins
+    on paper is farming — priced at market bids the bot has no way to collect,
+    since nothing it can sell is a raw resource. Going home is worth more than
+    the best number the market can offer, because the gold at the end of it is
+    real.
+    """
+
+    def _state(self, location, **over):
+        from slcw.model import parse_player
+        doc = {
+            "level": 18, "grade": 2, "energy": 80, "maxEnergy": 100,
+            "balance": 30_000, "currentHealth": 200, "maxHealth": 200,
+            "currentMana": 130, "currentLocationId": location,
+            "attributes": {"wisdom": 3, "vitality": 3}, "attributePoints": 0,
+            "claimedInitialRewardsV2": list(range(1, 19)),
+            "newbieQuest": 999, "activity": None,
+            "freeEnergyRefillsToday": 3, "lastFreeEnergyRefillDate": "2099-01-01",
+        }
+        doc.update(over)
+        return parse_player(doc)
+
+    def _task(self):
+        from slcw.tasks import Task, TaskStatus
+        return TaskStatus(
+            player_level=18, completed_count=3, all_done=False,
+            has_active_task=True,
+            task=Task(index=3, monster_id="troll_lvl17_2", monster_level=17,
+                      kills_required=10, kills_progress=4, status="active",
+                      gold_reward=1_700))
+
+    def _market(self):
+        """A market that makes farming look like the best idea in the world.
+
+        This is the production condition, not a contrived one: with the live
+        snapshot loaded, a finished wallet in Greyholm valued a trip to Crystal
+        Cave at 24,084 g/h and the Borderlands at nothing. Without a market
+        here the test passes for the wrong reason.
+        """
+        from slcw.market import build_snapshot
+        from slcw.farming import FARM_LOCATIONS
+        orders = []
+        for resource in ("copper_ore", "crystal_shard", "iron_ore", "silver_ore",
+                         "gold_ore", "mithril_ore", "adamantite_ore"):
+            orders.append({"status": "open", "type": "buy", "templateId": resource,
+                           "price": 900, "quantity": 9_999, "filled": 0})
+        assert FARM_LOCATIONS, "farm zones must exist for this test to mean anything"
+        return build_snapshot(orders)
+
+    def _top(self, location):
+        from tests.test_orchestrator import make
+        cands = make().build_candidates(
+            self._state(location), market=self._market(), holdings={},
+            task_status=self._task(), include_travel=True, wallet_id="w1")
+        return cands[0] if cands else None
+
+    def test_a_wallet_stranded_in_a_city_goes_back_to_the_fight(self):
+        top = self._top("city_17")
+        self.assertEqual(top.action, "startTravel")
+        self.assertIn(top.params["destinationId"], {"farm_3", "wildland_1"})
+
+    def test_it_picks_the_nearer_of_the_two_battle_zones(self):
+        from slcw import world
+        top = self._top("city_17")
+        self.assertEqual(top.params["destinationId"],
+                         world.nearest("city_17", ["farm_3", "wildland_1"]))
+
+    def test_a_wallet_already_in_place_just_fights(self):
+        self.assertEqual(self._top("farm_3").action, "startTaskBattle")
+
+    def test_no_task_means_no_errand(self):
+        from tests.test_orchestrator import make
+        cands = make().build_candidates(
+            self._state("city_17"), market=self._market(), holdings={},
+            task_status=None, include_travel=True, wallet_id="w1")
+        homeward = [c for c in cands if c.action == "startTravel"
+                    and c.params.get("destinationId") in {"farm_3", "wildland_1"}]
+        self.assertEqual([c for c in homeward if math.isinf(c.score)], [])
