@@ -6,7 +6,7 @@
 
 [![tests](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml/badge.svg)](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml)
 [![python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab?logo=python&logoColor=white)](https://www.python.org/)
-[![tests](https://img.shields.io/badge/tests-780%20passing-4c1)](tests/)
+[![tests](https://img.shields.io/badge/tests-782%20passing-4c1)](tests/)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 Every action is priced in gold-per-hour before it runs.
@@ -363,6 +363,11 @@ The two are parked at different scopes on purpose. Parking one full-shop
 template by its instance id would simply offer the next identical piece on the
 next cycle, and the one after that on the cycle after — a refusal turned into a
 loop, which is the failure this codebase keeps finding.
+
+The full-shop scope is wider still: `shop_equipment_stock` is one document per
+item type with no owner, so a full shop is true for every wallet at once. That
+refusal is parked fleet-wide, which is the difference between one refused cycle
+and thirty.
 
 Gear at or below the grade is kept while there is room, since it may yet be worn,
 and offered only once the bag is nearly full. Whatever the equip logic would put

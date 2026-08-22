@@ -57,6 +57,14 @@ PARKABLE = frozenset({
 })
 
 
+# Some refusals are facts about the game rather than about the wallet that
+# heard them. The Black Market's stock is one document per item type with no
+# owner, so "shop stock is full" is true for every wallet at once; parking it
+# under this shared name saves the other twenty-nine from finding out one
+# refused cycle at a time.
+FLEET = "*fleet*"
+
+
 def fingerprint(action: str, params: dict | None) -> str:
     """Stable identity for one call, arguments included.
 

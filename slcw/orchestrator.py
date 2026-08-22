@@ -12,6 +12,7 @@ from . import combat as combat_mod
 from .combat import CombatMemory, monster_level, select_monster
 from . import clan as clan_mod
 from .quests import NewbieQuestMemory
+from . import rejections as rejections_mod
 from .rejections import RejectionMemory
 from .config import Config
 from .guardrails import GuardrailViolation
@@ -160,7 +161,7 @@ class Orchestrator:
             if (decision.action == "sellEquipmentItem"
                     and "stock" in str(exc).lower()):
                 self.rejections.park(
-                    wallet["id"], "sellEquipmentItem",
+                    rejections_mod.FLEET, "sellEquipmentItem",
                     {"templateId": decision.params.get("templateId", "")}, str(exc))
             # Benign or not, a refused newbie quest is a refusal: the chain is
             # item-gated, and retrying it every cycle is what starved the fleet
@@ -179,7 +180,7 @@ class Orchestrator:
         if not wallet_id:
             return set()
         return {piece.template_id for piece in inventory.equippables()
-                if self._parked(wallet_id, "sellEquipmentItem",
+                if self._parked(rejections_mod.FLEET, "sellEquipmentItem",
                                 {"templateId": piece.template_id})}
 
     def _parked(self, wallet_id, action: str, params: dict) -> bool:

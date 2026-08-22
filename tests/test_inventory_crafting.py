@@ -446,7 +446,8 @@ class SaleDecisionTests(unittest.TestCase):
         """The refusal is about the item type, so parking one instance would
         just offer the next identical piece next cycle."""
         orch = make()
-        orch.rejections.park("w1", "sellEquipmentItem",
+        from slcw.rejections import FLEET
+        orch.rejections.park(FLEET, "sellEquipmentItem",
                              {"templateId": "plate_greaves_t2"},
                              "Shop stock is full for this item")
         actions = self._actions(_inv(("plate_greaves_t2", "i1")), orch=orch)
@@ -460,8 +461,9 @@ class SaleDecisionTests(unittest.TestCase):
         state = self._state()
         orch.decide_and_act({"id": "w1"}, None, state,
                             inventory=_inv(("plate_greaves_t2", "i1")))
+        from slcw.rejections import FLEET
         self.assertTrue(orch.rejections.is_parked(
-            "w1", "sellEquipmentItem", {"templateId": "plate_greaves_t2"}))
+            FLEET, "sellEquipmentItem", {"templateId": "plate_greaves_t2"}))
 
     def test_an_upgraded_piece_parks_only_itself(self):
         api = FakeApi()
@@ -470,8 +472,9 @@ class SaleDecisionTests(unittest.TestCase):
         orch = make(api=api)
         orch.decide_and_act({"id": "w1"}, None, self._state(),
                             inventory=_inv(("plate_greaves_t2", "i1")))
+        from slcw.rejections import FLEET
         self.assertFalse(orch.rejections.is_parked(
-            "w1", "sellEquipmentItem", {"templateId": "plate_greaves_t2"}))
+            FLEET, "sellEquipmentItem", {"templateId": "plate_greaves_t2"}))
         self.assertTrue(orch.rejections.is_parked(
             "w1", "sellEquipmentItem",
             {"instanceId": "i1", "templateId": "plate_greaves_t2"}))
@@ -502,3 +505,51 @@ class SaleLedgerTests(unittest.TestCase):
     def test_a_reply_without_revenue_records_nothing(self):
         from slcw import ledger
         self.assertEqual(ledger._extract_summary("sellEquipmentItem", {"success": True}), {})
+
+
+class SharedShopStockTests(unittest.TestCase):
+    """The shop's stock is the game's, not the wallet's.
+
+    `shop_equipment_stock` is queried without a user filter — one global
+    document per item type. So when one wallet is told the shop is full of
+    plate_greaves_t1, that is true for all thirty, and letting each of them
+    find out for itself costs thirty refusals instead of one.
+    """
+
+    def _state(self):
+        return parse_player({
+            "level": 15, "energy": 80, "maxEnergy": 100, "balance": 30_000,
+            "currentHealth": 130, "currentMana": 130, "currentLocationId": "farm_3",
+            "attributes": {"wisdom": 3, "vitality": 3}, "grade": 1,
+            "claimedInitialRewardsV2": list(range(1, 16)),
+            "newbieQuest": 999, "activity": None,
+            "freeEnergyRefillsToday": 3, "lastFreeEnergyRefillDate": "2099-01-01",
+        })
+
+    def test_one_wallets_refusal_speaks_for_the_fleet(self):
+        api = FakeApi()
+        api.fail_with = ("sellEquipmentItem", "FAILED_PRECONDITION",
+                         "Shop stock is full for this item")
+        orch = make(api=api)
+        orch.decide_and_act({"id": "wallet-01"}, None, self._state(),
+                            inventory=_inv(("plate_greaves_t2", "i1")))
+
+        orch.api = FakeApi()
+        actions = [c.action for c in orch.build_candidates(
+            self._state(), inventory=_inv(("plate_greaves_t2", "other")),
+            include_travel=False, wallet_id="wallet-02")]
+        self.assertNotIn("sellEquipmentItem", actions)
+
+    def test_an_upgraded_piece_is_still_only_this_wallets_problem(self):
+        api = FakeApi()
+        api.fail_with = ("sellEquipmentItem", "FAILED_PRECONDITION",
+                         "Cannot sell upgraded or slotted items to the Black Market")
+        orch = make(api=api)
+        orch.decide_and_act({"id": "wallet-01"}, None, self._state(),
+                            inventory=_inv(("plate_greaves_t2", "i1")))
+
+        orch.api = FakeApi()
+        actions = [c.action for c in orch.build_candidates(
+            self._state(), inventory=_inv(("plate_greaves_t2", "other")),
+            include_travel=False, wallet_id="wallet-02")]
+        self.assertIn("sellEquipmentItem", actions)
