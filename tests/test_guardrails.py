@@ -102,7 +102,40 @@ class GuardrailTests(unittest.TestCase):
 
     def test_every_known_callable_is_classified(self):
         """Every callable found in the game bundle must be a deliberate decision."""
+        # Refreshed 2026-08-22 by fetching every route the app links to and
+        # extracting each httpsCallable name: 90 in all, up from the 66 an
+        # earlier sweep had found.
         discovered = {
+            "buyEngineerPass",
+            "buyEquipmentItem",
+            "buyMerchantPass",
+            "buyStrategistPass",
+            "cancelBlackMarketOrder",
+            "cancelMarketOrder",
+            "claimAuctionItem",
+            "claimWithdrawalReward",
+            "createAuction",
+            "createWithdrawalRequest",
+            "executeBlackMarketOrder",
+            "fulfillMarketOrder",
+            "instantHeal",
+            "linkDiscordAccount",
+            "linkTelegramAccount",
+            "placeAuctionBid",
+            "placeBlackMarketLimitOrder",
+            "recalculateReferralLevels",
+            "recalculateWithdrawalStats",
+            "resolveAuctionSeller",
+            "sellEquipmentItem",
+            "sendToChat",
+            "submitPvPMove",
+            "syncDiscordRoles",
+            "unlinkDiscordAccount",
+            "unlinkTelegramAccount",
+            "upgradeBlackMarketSlots",
+            "upgradeEngineerTalent",
+            "upgradeMerchantTalent",
+            "upgradeStrategistTalent",
             "acceptTask", "awakenItem", "becomeCitizen", "buyBiomantPass", "buyLevel",
             "cancelGoldOrder", "claimExpeditionRewards", "claimInitialReward",
             "claimTaskReward", "completeCitizenshipQuest", "completeMiningQuest",

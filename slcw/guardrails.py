@@ -85,6 +85,18 @@ ALLOWED_CALLABLES = frozenset({
     # before it will even submit. This sells to the shop at a server-set price.
     "sellEquipmentItem",
 
+    # --- free bookkeeping ------------------------------------------------
+    # Recomputes the referral tree's cumulative levels and pays gold for the
+    # difference; the reply carries `goldRewarded`. Costs nothing and binds
+    # nothing — handleReferral is the call that binds accounts, and that stays
+    # denied.
+    "recalculateReferralLevels",
+    # Free, and measured on a wallet sitting at 40 of 40: it frees nothing.
+    # Slots are not stacks — a bag of 31 distinct items filled 40 slots because
+    # every equipment instance occupies its own. Allowed because it costs
+    # nothing, wired to nothing because it achieves nothing.
+    "sortInventory",
+
     # --- quests and tasks, free to run and to claim ---------------------
     "getTaskStatus",
     "acceptTask",
@@ -250,6 +262,42 @@ DENIED_CALLABLES = {
     "finishExpedition": "reward and cost model not measured",
     "claimExpeditionRewards": "reward and cost model not measured",
     "handleReferral": "binds accounts together; operator decision",
+
+    # --- classified 2026-08-22, after re-reading every route in the app ---
+    # The bundle sweep found 90 callables; these are the ones nothing had ever
+    # decided about. None is a gap in what the bot can do — each is a
+    # deliberate no.
+    "buyEngineerPass": "premium purchase",
+    "buyMerchantPass": "premium purchase",
+    "buyStrategistPass": "premium purchase",
+    "upgradeEngineerTalent": "costs currency, return not measured",
+    "upgradeMerchantTalent": "costs currency, return not measured",
+    "upgradeStrategistTalent": "costs currency, return not measured",
+    # The shop sells and buys the same gear, and it buys lower than it sells.
+    "buyEquipmentItem": "spends gold into a spread that runs against us",
+    # Limit orders park goods in a book nothing here watches; the bot fills at
+    # market instead, which is measured and settles in one call.
+    "placeBlackMarketLimitOrder": "parks goods in an order book nothing watches",
+    "cancelBlackMarketOrder": "only needed for limit orders, which are denied",
+    "upgradeBlackMarketSlots": "buys limit-order slots the bot does not use",
+    # The player market: 3,495 open orders across three distinct items on
+    # 2026-08-22, none of them anything the fleet holds, and createMarketOrder
+    # needs premium to place at all. Nothing to fill.
+    "fulfillMarketOrder": "player market has no bids on anything the fleet holds",
+    "cancelMarketOrder": "the bot places no player-market orders to cancel",
+    "createAuction": "auction outcome and timing not modelled",
+    "placeAuctionBid": "auction outcome and timing not modelled",
+    "claimAuctionItem": "only reachable through auctions, which are denied",
+    "resolveAuctionSeller": "only reachable through auctions, which are denied",
+    "createWithdrawalRequest": "moves funds off the account",
+    "recalculateWithdrawalStats": "withdrawal bookkeeping; nothing to recalculate",
+    "submitPvPMove": "arena has no reward or loss model",
+    "sendToChat": "posts publicly under the account's name",
+    "linkDiscordAccount": "binds the account to an external identity",
+    "unlinkDiscordAccount": "binds the account to an external identity",
+    "syncDiscordRoles": "binds the account to an external identity",
+    "linkTelegramAccount": "binds the account to an external identity",
+    "unlinkTelegramAccount": "binds the account to an external identity",
 }
 
 

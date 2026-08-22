@@ -158,3 +158,59 @@ class DecisionTests(unittest.TestCase):
         orch.decide_and_act({"id": "w1"}, None, state, holdings={"imperial_seal": 4})
         self.assertTrue(orch.rejections.is_parked(
             "w1", "purchaseImperialSeal", {"quantity": 1}))
+
+
+class ContinuityTests(unittest.TestCase):
+    """It does not stop at grade 2.
+
+    Nothing in the branch is written for a particular grade: it reads the next
+    one out of the table each time. These pin that down, because the whole
+    point of raising a grade is that the next ceiling arrives soon after.
+    """
+
+    def _state(self, level, grade, **over):
+        from slcw.model import parse_player
+        doc = {
+            "level": level, "grade": grade, "energy": 80, "maxEnergy": 100,
+            "balance": 300_000, "currentHealth": 200, "maxHealth": 200,
+            "currentMana": 130, "currentLocationId": "city_17",
+            "attributes": {"wisdom": 3, "vitality": 3}, "attributePoints": 0,
+            "claimedInitialRewardsV2": list(range(1, level + 1)),
+            "newbieQuest": 999, "activity": None,
+            "freeEnergyRefillsToday": 3, "lastFreeEnergyRefillDate": "2099-01-01",
+            "cityAccessPasses": {"17": 4_102_444_800},
+        }
+        doc.update(over)
+        return parse_player(doc)
+
+    def _top(self, level, grade, seals, **over):
+        from tests.test_orchestrator import make
+        cands = make().build_candidates(
+            self._state(level, grade, **over),
+            holdings={"imperial_seal": seals},
+            include_travel=False, wallet_id="w1")
+        return cands[0] if cands else None
+
+    def test_a_grade_two_wallet_at_its_own_ceiling_goes_again(self):
+        top = self._top(level=30, grade=2, seals=25)
+        self.assertEqual(top.action, "evolveGrade")
+
+    def test_it_buys_the_twenty_five_seals_grade_three_wants(self):
+        top = self._top(level=30, grade=2, seals=0)
+        self.assertEqual(top.action, "purchaseImperialSeal")
+        self.assertEqual(top.params, {"quantity": 25})
+
+    def test_a_grade_two_wallet_below_thirty_is_left_to_level(self):
+        self.assertNotEqual(self._top(level=25, grade=2, seals=25).action,
+                            "evolveGrade")
+
+    def test_the_ladder_runs_all_the_way_up(self):
+        for grade, level, seals in ((3, 45, 125), (4, 60, 625),
+                                    (5, 75, 3_125), (6, 90, 15_625)):
+            top = self._top(level=level, grade=grade, seals=seals,
+                            balance=999_999_999)
+            self.assertEqual(top.action, "evolveGrade", f"grade {grade}")
+
+    def test_grade_seven_is_the_end_of_it(self):
+        self.assertNotEqual(getattr(self._top(level=105, grade=7, seals=99_999),
+                                    "action", None), "evolveGrade")

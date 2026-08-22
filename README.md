@@ -6,7 +6,7 @@
 
 [![tests](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml/badge.svg)](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml)
 [![python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab?logo=python&logoColor=white)](https://www.python.org/)
-[![tests](https://img.shields.io/badge/tests-829%20passing-4c1)](tests/)
+[![tests](https://img.shields.io/badge/tests-834%20passing-4c1)](tests/)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 Every action is priced in gold-per-hour before it runs.
@@ -631,6 +631,32 @@ never yet fought, all scaled by the one measured hunting/battle ratio rather tha
 a separate guess per monster.
 
 ---
+
+## Where the money goes, and where it does not
+
+The obvious question about a game with a token in its name is whether any of
+this reaches a wallet. Every route the app links to was fetched and read on
+2026-08-22 to answer it, and the answer is worth writing down plainly.
+
+**Out of the game.** `/withdraw` calls `createWithdrawalRequest` — no arguments
+— which sends the account's entire `usdt_balance` to its linked Solana address.
+The minimum is 10 USDT. Beyond that sits a milestone ladder on *cumulative*
+withdrawals: $1,000 pays $100 USDT, $5,000 pays $300, $10,000 pays $500, and
+past $30,000 the prizes stop being money and start being an iPhone, a MacBook
+and eventually a Ferrari.
+
+**Into the game.** `/shop/purchase/solana` buys diamonds with SOL. That is the
+only inbound route.
+
+**Between the two, nothing.** `usdt_balance` is credited by referrals and by
+Genesis Era season prizes — the account's own play does not touch it. The gold
+market (`placeGoldOrder`, `executeGoldMarketOrder`, 100,000 gold to a lot)
+trades gold against *diamonds*, not USDT, and diamonds are what SOL buys. So
+there is a way in, a way out, and no bridge from one to the other: farming gold
+does not become USDT, however much of it there is. The `$SLCW` token itself is
+still unlaunched — the client's own copy says to expect it in Q2 2026.
+
+All of it stays denied. This bot plays the game; it does not move funds.
 
 ## Guardrails
 
