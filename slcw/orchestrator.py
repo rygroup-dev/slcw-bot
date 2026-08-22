@@ -10,6 +10,7 @@ from . import build as build_mod
 from . import farming, inventory as inv_mod, leveling, refining, world
 from . import combat as combat_mod
 from .combat import CombatMemory, monster_level, select_monster
+from . import blackmarket as bm_mod
 from . import clan as clan_mod
 from . import evolution as evo_mod
 from .quests import NewbieQuestMemory
@@ -311,6 +312,26 @@ class Orchestrator:
             return [econ.free_candidate(
                 "claimTaskReward", {},
                 f"task reward of {task_status.task.gold_reward:,} gold ready")]
+
+        stale_market = (market is None
+                        or not market.is_fresh(self.config.market_ttl_seconds))
+
+        # Refined goods are the one thing the game reliably pays gold for.
+        # Pulling every open order showed the player market holds three
+        # distinct items and wants premium currency to trade at all, while the
+        # Black Market has 6,000 orders whose buy side is entirely refined:
+        # copper_ingot at 899 with 6,324 wanted, mithril_ingot at 3,300. This
+        # is what makes gathering and refining worth anything.
+        if not stale_market:
+            resale = bm_mod.next_sale(holdings or {}, market)
+            if resale is not None:
+                params = {"resourceId": resale.item, "action": "sell",
+                          "quantity": resale.quantity}
+                if not self._parked(wallet_id, "executeBlackMarketOrder", params):
+                    return [econ.free_candidate(
+                        "executeBlackMarketOrder", params,
+                        f"{resale.quantity}x {resale.item} to the Black Market "
+                        f"(~{resale.net:,} gold after tax)")]
 
         # Raising the grade comes before anything that earns XP, because a
         # wallet at its grade cap earns none: the ceiling is 15 x grade, and
@@ -963,6 +984,10 @@ class Orchestrator:
         if action == "resumeBattle":
             return self.resume_battle(session, candidate.params["battleId"],
                                       candidate.params["monsterId"])
+        if action == "executeBlackMarketOrder":
+            p = candidate.params
+            return self.api.execute_black_market_order(
+                session, p["resourceId"], p["action"], p["quantity"])
         if action == "payCityEntryFee":
             return self.api.pay_city_entry_fee(session, candidate.params["cityId"])
         if action == "purchaseImperialSeal":

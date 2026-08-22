@@ -149,6 +149,18 @@ class GameApi:
         return self._call(session, "openChests", {
             "chestTemplateId": chest_template_id, "quantity": quantity})
 
+    def execute_black_market_order(self, session, resource_id: str,
+                                   action: str, quantity: int) -> dict:
+        """Fill instantly against the Black Market order book, paid in gold.
+
+        Measured 2026-08-22: five copper_ingot returned
+        {totalFilled: 5, totalGold: 4495, tax: 899} and the balance rose by
+        3,596. No premium currency, no travel — it works from a farm zone.
+        """
+        return self._call(session, "executeBlackMarketOrder", {
+            "resourceId": resource_id, "action": action,
+            "quantity": int(quantity), "forceExecution": True})
+
     def pay_city_entry_fee(self, session, city_id: str) -> dict:
         """Buy timed access to a city. `city_id` is the bare number, "17"."""
         return self._call(session, "payCityEntryFee", {"cityId": city_id})

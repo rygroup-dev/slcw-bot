@@ -6,7 +6,7 @@
 
 [![tests](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml/badge.svg)](https://github.com/rygroup-dev/slcw-bot/actions/workflows/tests.yml)
 [![python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab?logo=python&logoColor=white)](https://www.python.org/)
-[![tests](https://img.shields.io/badge/tests-809%20passing-4c1)](tests/)
+[![tests](https://img.shields.io/badge/tests-829%20passing-4c1)](tests/)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 Every action is priced in gold-per-hour before it runs.
@@ -357,9 +357,28 @@ and that trip is a free action rather than a scored one. Not because travel is
 special, but because the gold at the end of it is real and the number it is
 competing with is not.
 
-The wider fix — pricing materials by what they can actually be turned into,
-which now that grades are rising means crafted gear the Black Market will buy —
-is still open.
+That gap is now closed, and closing it meant finding out where the game
+actually pays. Every open order on both markets was pulled and counted:
+
+| | Orders | Buy side |
+|---|---|---|
+| Player market (`market_orders`) | 3,495 | three distinct items, none the fleet holds — and placing an order needs premium currency no wallet has |
+| **Black Market** (`blackmarket_orders`) | **6,000** | **refined goods, and only refined goods** |
+
+Raw ore, logs, hides and monster drops have no bid anywhere. Refined ones have
+standing demand in the thousands: copper_ingot at 899 with 6,324 wanted,
+iron_ingot 1,350, steel_ingot 2,100, mithril_ingot 3,300, echo_ferocity 15,001.
+
+`executeBlackMarketOrder` fills against that book instantly, is paid in gold,
+costs no premium and needs no travel. Measured before allowlisting: five
+copper_ingot returned a quote of 4,495 with tax 899, and the balance rose by
+3,596. So the market takes a fifth, and the ledger records the net.
+
+That makes the whole production chain real for the first time — gather, refine,
+sell — and it is why the gathering valuations were not nonsense after all, only
+unrealisable. A stack is sold down to a reserve rather than emptied, because the
+same ingots are what the crafting bench turns into gear the shop pays ten times
+as much for.
 
 ### The ceiling, and the way through it
 

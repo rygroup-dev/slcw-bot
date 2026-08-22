@@ -62,6 +62,18 @@ ALLOWED_CALLABLES = frozenset({
     "payCityEntryFee",
     "evolveGrade",
 
+    # --- selling what the workshops make, which is where the gold is ----
+    # Measured before allowlisting: five copper_ingot returned
+    # {totalFilled: 5, totalGold: 4495, tax: 899} and the balance rose by
+    # 3,596. Paid in gold, no premium currency, no travel.
+    #
+    # This is not createMarketOrder, which stays denied: that is the player
+    # market, it wants premium to place an order at all, and pulling every open
+    # order found 3,495 of them across three distinct items — none of which the
+    # fleet holds. The Black Market had 6,000, and its buy side is refined
+    # goods with thousands of units of standing demand.
+    "executeBlackMarketOrder",
+
     # --- selling gear back, gold in and a slot freed --------------------
     # Measured live on 2026-08-22 before allowlisting, which is what this list
     # asks for: one plate_greaves_t2 paid 8,948 gold with taxAmount 0, the

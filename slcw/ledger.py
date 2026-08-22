@@ -46,6 +46,17 @@ def _extract_summary(action: str, result: dict) -> dict:
         if xp is None:
             return {}
         return {"type": "newbieQuest", "xp": int(xp)}
+    if action == "executeBlackMarketOrder":
+        # {"success", "totalFilled", "totalGold", "tax"}. totalGold is the
+        # gross quote; the tax never arrives, so the ledger records what the
+        # balance actually gained.
+        filled = result.get("totalFilled")
+        if not filled:
+            return {}
+        gross = int(result.get("totalGold", 0) or 0)
+        return {"type": "resource_sale",
+                "gold": gross - int(result.get("tax", 0) or 0),
+                "quantity": int(filled)}
     if action == "sellEquipmentItem":
         # {"success", "sellPrice", "taxAmount", "playerRevenue", "templateId"}.
         # No "rewardSummary" either, and at ~8,900 gold a piece this would have

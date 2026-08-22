@@ -44,6 +44,10 @@ class FakeApi:
         return self._record("openChests", chestTemplateId=chest_template_id,
                             quantity=quantity)
 
+    def execute_black_market_order(self, session, resource_id, action, quantity):
+        return self._record("executeBlackMarketOrder", resourceId=resource_id,
+                            action=action, quantity=quantity)
+
     def pay_city_entry_fee(self, session, city_id):
         return self._record("payCityEntryFee", cityId=city_id)
 
