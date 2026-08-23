@@ -195,10 +195,17 @@ class ContinuityTests(unittest.TestCase):
         top = self._top(level=30, grade=2, seals=25)
         self.assertEqual(top.action, "evolveGrade")
 
-    def test_it_buys_the_twenty_five_seals_grade_three_wants(self):
+    def test_it_buys_the_twenty_five_seals_grade_three_wants_a_batch_at_a_time(self):
+        """Only a single-seal purchase has ever been measured, so twenty-five
+        are committed five at a time rather than in one call the shop might
+        cap, misprice, or refuse whole."""
         top = self._top(level=30, grade=2, seals=0)
         self.assertEqual(top.action, "purchaseImperialSeal")
-        self.assertEqual(top.params, {"quantity": 25})
+        self.assertEqual(top.params, {"quantity": 5})
+
+    def test_the_last_batch_is_only_as_big_as_what_is_missing(self):
+        top = self._top(level=30, grade=2, seals=23)
+        self.assertEqual(top.params, {"quantity": 2})
 
     def test_a_grade_two_wallet_below_thirty_is_left_to_level(self):
         self.assertNotEqual(self._top(level=25, grade=2, seals=25).action,

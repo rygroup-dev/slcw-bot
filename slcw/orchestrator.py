@@ -411,7 +411,7 @@ class Orchestrator:
         # thousand fights' worth of XP a day. It only fires once the level gate
         # for the next grade is already met, so it never walks a wallet across
         # the map for something it cannot do on arrival.
-        ascend = self._evolution_candidate(state, holdings, wallet_id)
+        ascend = self._evolution_candidate(state, holdings, cities, wallet_id)
         if ascend is not None:
             return [ascend]
 
@@ -440,7 +440,7 @@ class Orchestrator:
         # wallet old enough to trade steps out of the chain while it has the
         # energy for a dispatch, and steps back into it when it does not. The
         # task is still waiting: the chain has no clock on it.
-        trade = self._caravan_candidate(state, cities, wallet_id)
+        trade = self._caravan_candidate(state, cities, holdings, wallet_id)
         trading_now = trade is not None and state.energy >= caravan_mod.DISPATCH_ENERGY
 
         if task_status is not None and task_status.eligible and not trading_now:
@@ -629,7 +629,7 @@ class Orchestrator:
         affordable = int(state.energy) // int(target.energy_cost)
         return max(1, min(affordable, MAX_PROJECTED_REPEATS))
 
-    def _caravan_candidate(self, state, cities, wallet_id=None):
+    def _caravan_candidate(self, state, cities, holdings=None, wallet_id=None):
         """Buy a load where it is cheap and sell it where it is short.
 
         Two things gate this and neither is arbitrary. The level gate is the
@@ -650,6 +650,23 @@ class Orchestrator:
         budget = self.spendable_gold(state, wallet_id)
         if budget <= 0:
             return None
+
+        # Gold is the goal only until the next ascent is paid for. A caravan
+        # pays no xp at all, and the first hour of live trading showed exactly
+        # what that means: fleet xp went from 6,500 an hour to zero, with every
+        # wallet still eight levels short of the grade 3 gate it is saving up
+        # for. So a wallet below the level its next grade wants stops trading
+        # the moment it can afford the seals, and goes back to fighting for the
+        # level. At the cap the reverse holds — xp there is discarded, and
+        # trading is the only thing left worth doing.
+        step = evo_mod.next_grade(state.grade)
+        if step is not None:
+            need_level, _ = evo_mod.REQUIREMENTS[step]
+            funded = evo_mod.ascent_cost(
+                state.grade, (holdings or {}).get(evo_mod.SEAL_ITEM, 0),
+                cities.get(evo_mod.CITADEL))
+            if state.level < need_level and budget >= funded:
+                return None
 
         here = state.location_id
         if here in cities:
@@ -733,7 +750,7 @@ class Orchestrator:
             return 0
         return max(0, gold - self.config.gold_reserve)
 
-    def _evolution_candidate(self, state, holdings, wallet_id=None):
+    def _evolution_candidate(self, state, holdings, cities=None, wallet_id=None):
         """Travel to Greyholm, buy the seals it is short of, and ascend.
 
         Seals are spent for good, so the order matters: the level gate is
@@ -759,8 +776,8 @@ class Orchestrator:
         # gold to finish the errand is simply a wallet that has stopped playing.
         # Budgeted at the top of the shop's own price curve rather than today's
         # quote, so the answer cannot go stale in transit.
-        if short and self.spendable_gold(state, wallet_id) < (
-                short * evo_mod.SEAL_BASE_PRICE * 2 + evo_mod.CITY_ENTRY_FEE):
+        if short and self.spendable_gold(state, wallet_id) < evo_mod.ascent_cost(
+                state.grade, held, (cities or {}).get(evo_mod.CITADEL), safety=1.25):
             return None
 
         if state.location_id != evo_mod.CITADEL:
@@ -790,12 +807,13 @@ class Orchestrator:
                     f"(the shop and the altar are behind it)")
             return None
 
-        params = {"quantity": short}
+        batch = min(short, evo_mod.SEAL_BATCH)
+        params = {"quantity": batch}
         if self._parked(wallet_id, "purchaseImperialSeal", params):
             return None
         return econ.free_candidate(
             "purchaseImperialSeal", params,
-            f"{short} imperial seal(s) for grade {step} "
+            f"{batch} imperial seal(s) for grade {step} "
             f"(holding {held} of {need_seals})")
 
     @staticmethod

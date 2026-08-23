@@ -923,6 +923,14 @@ irreversible spend the engine will not make on its own.
 **Expeditions, arena and mounts are unmapped.** The callables exist and are denied until
 their reward and cost models are measured, rather than enabled on a guess.
 
+**Trading stops when the next grade is paid for.** A caravan pays gold and
+reputation and no xp at all, and a grade gate is a level gate first — grade 3 wants
+level 30 before it wants its twenty-five seals. So a wallet below that level trades
+only until it can afford the ascent, then goes back to fighting for the level; at its
+grade's level ceiling, where xp is discarded anyway, it trades whatever it holds. The
+seal price comes from the citadel's own shelf when the map has been read, and from the
+top of the price curve when it has not.
+
 **Caravans open at level 20.** Each city's warehouse turns out one refined good and
 consumes two others, and `dispatchCaravan` buys a warehouse's output with gold, hauls it
 at twenty seconds per unit of map distance, and sells it on arrival. The cargo never

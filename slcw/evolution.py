@@ -37,6 +37,14 @@ MAX_GRADE = max(REQUIREMENTS)
 # and the city warehouse moves it: at empty it doubles, at full it halves.
 SEAL_BASE_PRICE = 3_500
 
+# How many seals to buy in one call. Grade 2 needed a single seal and that is
+# all that has ever been measured; grade 3 needs twenty-five, and a shop that
+# quietly caps a bulk purchase — or prices one differently — would refuse or
+# overcharge the whole spend at once. Five at a time costs the same on a shelf
+# this deep, commits a fifth as much per call, and each one is confirmed by the
+# inventory before the next.
+SEAL_BATCH = 5
+
 # Greyholm is `accessType: "paid_50"`, measured 2026-08-22. The other setting
 # the client knows about charges 1,000, so budget for that rather than for the
 # cheaper case we happen to be looking at.
@@ -88,3 +96,34 @@ def seal_price(stock: int, capacity: int = 0) -> int:
     else:
         factor = 1 - 0.5 * min((stock - half) / half, 1)
     return int(-(-SEAL_BASE_PRICE * max(factor, 0.5) // 1))
+
+
+def _seal_stock(city: dict | None) -> tuple[int | None, int]:
+    """Seals on the citadel's shelf, and the shelf's size, from its document."""
+    warehouse = (city or {}).get("warehouse") or {}
+    capacity = int((city or {}).get("warehouseCapacity") or 0)
+    for row in (warehouse.get("outputs") or []):
+        if row.get("templateId") == SEAL_ITEM:
+            return int(row.get("quantity", 0) or 0), capacity
+    output = warehouse.get("output") or {}
+    if output.get("templateId") == SEAL_ITEM:
+        return int(output.get("quantity", 0) or 0), capacity
+    return None, capacity
+
+
+def ascent_cost(grade: int, held: int, city: dict | None = None,
+                safety: float = 1.0) -> int:
+    """Gold still needed to finish the next ascent: the seals short, plus the door.
+
+    Priced off the citadel's live shelf when its document is to hand, and at
+    the top of the curve when it is not — quoting a seal at half price and
+    finding it at double is how a wallet ends up stranded in a city with no
+    farm and no battle zone. `safety` is for callers who must commit to a
+    journey before they can check the price again.
+    """
+    short = seals_needed(grade, held)
+    if not short:
+        return 0
+    stock, capacity = _seal_stock(city)
+    price = SEAL_BASE_PRICE * 2 if stock is None or capacity <= 0 else seal_price(stock, capacity)
+    return int(short * price * max(safety, 1.0)) + CITY_ENTRY_FEE

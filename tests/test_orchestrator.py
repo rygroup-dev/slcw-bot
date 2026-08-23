@@ -811,9 +811,10 @@ class CaravanBranchTests(unittest.TestCase):
         Unclaimed level rewards and a pending grade-up are both free value and
         short-circuit the whole ranking, so a wallet still carrying either
         tests nothing about trading. Grade 2 at level 20 is mid-band: below the
-        cap, above the caravan gate.
+        cap, above the caravan gate. The purse is under what grade 3 costs,
+        which is the state a wallet trades in — see the ascent gate below.
         """
-        doc = {"level": 20, "grade": 2, "balance": 200_000, "energy": 90,
+        doc = {"level": 20, "grade": 2, "balance": 100_000, "energy": 90,
                "claimedInitialRewardsV2": list(range(1, 21))}
         doc.update(overrides)
         return state_of(**doc)
@@ -961,6 +962,25 @@ class CaravanBranchTests(unittest.TestCase):
             young, build_snapshot([]), {}, task_status=status,
             wallet_id="w", cities=self.cities())]
         self.assertEqual(actions, ["startTaskBattle"])
+
+    def test_a_wallet_that_can_already_pay_for_its_next_grade_goes_back_to_fighting(self):
+        """Trading pays no xp, and a grade gate is a level gate first."""
+        orchestrator = make()
+        funded = self.trader(balance=400_000)
+        self.assertIsNone(self.trade_in(orchestrator.build_candidates(
+            funded, build_snapshot([]), {}, wallet_id="w", cities=self.cities())))
+
+    def test_a_wallet_at_its_level_cap_trades_however_rich_it_is(self):
+        """At the cap the xp is discarded, so gold is the only thing left.
+
+        Asked of the branch directly: through build_candidates a capped wallet
+        that can afford its ascent goes and takes it, which outranks
+        everything — that is the ascent gate working, not the trade one.
+        """
+        orchestrator = make()
+        capped = self.trader(level=30, balance=400_000)
+        self.assertIsNotNone(orchestrator._caravan_candidate(
+            capped, self.cities(), {}, "w"))
 
     def test_the_dispatch_carries_its_outlay_into_the_ledger(self):
         api = FakeApi()
