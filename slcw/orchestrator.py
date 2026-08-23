@@ -431,7 +431,19 @@ class Orchestrator:
         if clan_candidate is not None:
             return [clan_candidate]
 
-        if task_status is not None and task_status.eligible:
+        # Trading is worked out before the hunt chain because the chain never
+        # runs out: a wallet in the Borderlands always has a task battle to
+        # return, and the chain returns it as free value, so anything ordered
+        # after it is unreachable. That was the right call while fighting was
+        # the only gold there was. It is not any more — a load pays 5k-11k for
+        # twenty energy where a whole fourteen-kill task pays 2,500 — so a
+        # wallet old enough to trade steps out of the chain while it has the
+        # energy for a dispatch, and steps back into it when it does not. The
+        # task is still waiting: the chain has no clock on it.
+        trade = self._caravan_candidate(state, cities, wallet_id)
+        trading_now = trade is not None and state.energy >= caravan_mod.DISPATCH_ENERGY
+
+        if task_status is not None and task_status.eligible and not trading_now:
             # Accepting and fighting are location-gated server-side ("You must be
             # in the Borderlands"), and that refusal classifies as benign — so
             # offering either from a city silently burns the cycle and clears the
@@ -578,7 +590,6 @@ class Orchestrator:
         # the scarcity price on energy hands the wallet back to fighting on its
         # own — which is why levelling continues even with XP priced to put
         # gold first.
-        trade = self._caravan_candidate(state, cities, wallet_id)
         if trade is not None:
             candidates.append(trade)
 

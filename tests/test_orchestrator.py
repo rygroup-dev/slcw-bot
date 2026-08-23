@@ -912,6 +912,56 @@ class CaravanBranchTests(unittest.TestCase):
         self.assertIsNone(self.trade_in(orchestrator.build_candidates(
             state, build_snapshot([]), {}, wallet_id="w", cities=self.cities())))
 
+    def test_trading_steps_out_of_the_hunt_chain_while_the_energy_lasts(self):
+        """The chain never runs out, so it has to yield or trading never runs."""
+        from slcw.tasks import Task, TaskStatus
+        orchestrator = make()
+        task = Task(monster_id="bigfrog_lvl21_1", kills_progress=2,
+                    kills_required=14, gold_reward=2500, status="active")
+        status = TaskStatus(player_level=20, completed_count=39,
+                            has_active_task=True, task=task)
+        borderlands = self.trader(currentLocationId="farm_3")
+        actions = [c.action for c in orchestrator.build_candidates(
+            borderlands, build_snapshot([]), {}, task_status=status,
+            wallet_id="w", cities=self.cities())]
+        self.assertNotIn("startTaskBattle", actions)
+        self.assertIn("startTravel", actions)
+
+    def test_a_wallet_too_tired_to_trade_goes_back_to_its_task(self):
+        """Below a dispatch's twenty energy the chain gets its wallet back.
+
+        The free refill outranks both, so the wallet has to be out of refills
+        for the day before this is the choice it actually faces.
+        """
+        import datetime as _dt
+        from slcw.tasks import Task, TaskStatus
+        orchestrator = make()
+        task = Task(monster_id="bigfrog_lvl21_1", kills_progress=2,
+                    kills_required=14, gold_reward=2500, status="active")
+        status = TaskStatus(player_level=20, completed_count=39,
+                            has_active_task=True, task=task)
+        today = _dt.datetime.now(_dt.timezone.utc).date().isoformat()
+        spent = self.trader(currentLocationId="farm_3", energy=19,
+                            freeEnergyRefillsToday=3,
+                            lastFreeEnergyRefillDate=today)
+        actions = [c.action for c in orchestrator.build_candidates(
+            spent, build_snapshot([]), {}, task_status=status,
+            wallet_id="w", cities=self.cities())]
+        self.assertEqual(actions, ["startTaskBattle"])
+
+    def test_below_the_gate_the_hunt_chain_still_wins_outright(self):
+        from slcw.tasks import Task, TaskStatus
+        orchestrator = make()
+        task = Task(monster_id="bigfrog_lvl18_1", kills_progress=2,
+                    kills_required=14, gold_reward=2500, status="active")
+        status = TaskStatus(player_level=19, completed_count=39,
+                            has_active_task=True, task=task)
+        young = self.trader(level=19, currentLocationId="farm_3")
+        actions = [c.action for c in orchestrator.build_candidates(
+            young, build_snapshot([]), {}, task_status=status,
+            wallet_id="w", cities=self.cities())]
+        self.assertEqual(actions, ["startTaskBattle"])
+
     def test_the_dispatch_carries_its_outlay_into_the_ledger(self):
         api = FakeApi()
         orchestrator = make(api=api)
