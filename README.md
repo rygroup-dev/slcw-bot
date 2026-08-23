@@ -716,7 +716,8 @@ allowed or denied **with a recorded reason**, so none is left to chance.
 | `withdraw`, `transfer`, `signTransaction` | moves real funds |
 | `placeGoldOrder`, `createOrder`, `cancelOrder` | the bot never trades on its own |
 | `evolveGrade`, `sharpenItem`, `deleteInventoryItem` | consumes items irreversibly |
-| `payCityEntryFee`, `buyLevel`, arena, caravan | costed, with no measured return |
+| `payCityEntryFee`, `buyLevel`, arena | costed, with no measured return |
+| `dispatchCaravan` | profit measured; the robbery loss is not |
 | `handleReferral` | binds accounts together; an operator decision |
 
 Crossed spreads are surfaced with the numbers so **you** can act. The bot will not
@@ -914,8 +915,19 @@ unlock, and the engine already declines to gather until then.
 is gated by character grade, and raising grade consumes imperial seals — an
 irreversible spend the engine will not make on its own.
 
-**Expeditions, arena, caravans and mounts are unmapped.** The callables exist and are denied until
+**Expeditions, arena and mounts are unmapped.** The callables exist and are denied until
 their reward and cost models are measured, rather than enabled on a guess.
+
+**Caravans are mapped but still denied.** Each city's warehouse turns out one refined
+good and consumes two others, and `dispatchCaravan` buys the first city's output with
+gold and sells it into a city that is short of it. Both prices come from one formula in
+the client — a warehouse holding nothing pays twice the base price, a full one pays half
+— so the spread is readable before dispatching, and priced against the live cities on
+2026-08-23 the best route returned 57,259 gold for twenty energy and 220 seconds, against
+roughly 185 gold per energy from a battle. It stays denied on the one thing the client
+does not show: cities carry a `caravanRobberyDefenseBonus`, so a caravan can evidently be
+robbed, but the chance and the loss are resolved server-side and have never been seen.
+The profit is measured; the downside is not, and one is not a reason to skip the other.
 
 ---
 
