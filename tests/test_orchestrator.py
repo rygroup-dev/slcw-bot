@@ -78,6 +78,10 @@ class FakeApi:
     def start_travel(self, session, destination_id):
         return self._record("startTravel", destinationId=destination_id)
 
+    def dispatch_caravan(self, session, template_id, quantity, destination_id):
+        return self._record("dispatchCaravan", templateId=template_id,
+                            quantity=quantity, destinationId=destination_id)
+
     def start_battle(self, session, monster_id):
         self.calls.append(("startBattle", {"monsterId": monster_id}))
         return {"battleId": "battle-1"}
@@ -234,9 +238,15 @@ class SelectionTests(unittest.TestCase):
         self.assertFalse(candidates[0].degraded)
 
     def test_hunting_is_offered_outside_battle_locations(self):
-        """Unlike battle, hunting is not gated to farm_3/wildland_1."""
+        """Unlike battle, hunting is not gated to farm_3/wildland_1.
+
+        On a full bar: hunting buys 11 xp with three energy where a battle buys
+        22 with one, so once energy is scarce enough to carry a price it is
+        correctly outbid. Half a bar used to be enough at an xp worth 8 gold
+        and is not at 5.
+        """
         orchestrator = make()
-        state = state_of(currentLocationId="farm_1", energy=50, balance=1000)
+        state = state_of(currentLocationId="farm_1", energy=100, balance=1000)
         candidates = orchestrator.build_candidates(state)
         self.assertIn("startHunting", [c.action for c in candidates])
 
@@ -244,7 +254,7 @@ class SelectionTests(unittest.TestCase):
         """Hunting is not hardcoded — it tracks whatever select_monster picks,
         which is why it scales with level, stats and equipment over time."""
         orchestrator = make()
-        state = state_of(currentLocationId="farm_3", energy=50, balance=1000)
+        state = state_of(currentLocationId="farm_3", energy=100, balance=1000)
         candidates = orchestrator.build_candidates(state)
         by_action = {c.action: c for c in candidates}
         self.assertIn("battle", by_action)
@@ -790,3 +800,123 @@ class ExecutorCoverageTests(unittest.TestCase):
         self.assertIn("createClan", chosen)
         self.assertIn("generateClanQuest", chosen)
         self.assertIn("createClan", self._executors())
+
+
+class CaravanBranchTests(unittest.TestCase):
+    """The level-20 trade branch: when it appears, and when it must not."""
+
+    def trader(self, **overrides):
+        """A wallet at the gate with its level rewards already claimed.
+
+        Unclaimed level rewards and a pending grade-up are both free value and
+        short-circuit the whole ranking, so a wallet still carrying either
+        tests nothing about trading. Grade 2 at level 20 is mid-band: below the
+        cap, above the caravan gate.
+        """
+        doc = {"level": 20, "grade": 2, "balance": 200_000, "energy": 90,
+               "claimedInitialRewardsV2": list(range(1, 21))}
+        doc.update(overrides)
+        return state_of(**doc)
+
+    def cities(self):
+        """Virtan holding battle_ember, and Greyholm short of it."""
+        return {
+            "city_2": {
+                "warehouseCapacity": 50_000, "taxRate": 10,
+                "warehouse": {"isTradeHub": True, "input": [],
+                              "outputs": [{"templateId": "battle_ember",
+                                           "quantity": 40_000}]},
+            },
+            "city_17": {
+                "warehouseCapacity": 5_000, "taxRate": 10,
+                "warehouse": {"output": {"templateId": "chronicle_page",
+                                         "quantity": 400},
+                              "input": [{"templateId": "battle_ember",
+                                         "quantity": 0}]},
+            },
+        }
+
+    def trade_in(self, candidates):
+        return next((c for c in candidates if c.action == "dispatchCaravan"), None)
+
+    def test_a_wallet_below_the_gate_plays_exactly_as_before(self):
+        orchestrator = make()
+        state = self.trader(level=19)
+        with_cities = orchestrator.build_candidates(
+            state, build_snapshot([]), {}, wallet_id="w", cities=self.cities())
+        without = orchestrator.build_candidates(
+            state, build_snapshot([]), {}, wallet_id="w")
+        self.assertIsNone(self.trade_in(with_cities))
+        self.assertEqual([c.action for c in with_cities],
+                         [c.action for c in without])
+
+    def test_at_the_gate_a_load_is_offered(self):
+        orchestrator = make()
+        state = self.trader()
+        trade = self.trade_in(orchestrator.build_candidates(
+            state, build_snapshot([]), {}, wallet_id="w", cities=self.cities()))
+        self.assertIsNotNone(trade)
+        self.assertEqual(trade.params["destinationId"], "city_17")
+        self.assertEqual(trade.params["templateId"], "battle_ember")
+        self.assertEqual(trade.energy_cost, 20)
+
+    def test_a_load_that_cannot_be_paid_for_is_not_offered(self):
+        orchestrator = make()
+        state = self.trader(balance=100)
+        self.assertIsNone(self.trade_in(orchestrator.build_candidates(
+            state, build_snapshot([]), {}, wallet_id="w", cities=self.cities())))
+
+    def test_a_dispatch_needs_its_twenty_energy(self):
+        orchestrator = make()
+        state = self.trader(energy=19)
+        self.assertIsNone(self.trade_in(orchestrator.build_candidates(
+            state, build_snapshot([]), {}, wallet_id="w", cities=self.cities())))
+
+    def test_the_load_shrinks_to_what_the_purse_holds(self):
+        orchestrator = make()
+        rich = self.trader()
+        poor = self.trader(balance=20_000)
+        full = self.trade_in(orchestrator.build_candidates(
+            rich, build_snapshot([]), {}, wallet_id="w", cities=self.cities()))
+        part = self.trade_in(orchestrator.build_candidates(
+            poor, build_snapshot([]), {}, wallet_id="w", cities=self.cities()))
+        self.assertEqual(full.params["quantity"], 10)
+        self.assertLess(part.params["quantity"], 10)
+        self.assertLessEqual(part.gold_cost, 20_000)
+
+    def test_a_wallet_away_from_the_cities_is_offered_the_walk_not_the_load(self):
+        orchestrator = make()
+        state = self.trader(currentLocationId="farm_3")
+        candidates = orchestrator.build_candidates(
+            state, build_snapshot([]), {}, wallet_id="w", cities=self.cities())
+        self.assertIsNone(self.trade_in(candidates))
+        walk = next(c for c in candidates
+                    if c.action == "startTravel" and "trade" in c.reason)
+        self.assertEqual(walk.params["destinationId"], "city_2")
+
+    def test_travel_to_trade_respects_the_auto_travel_switch(self):
+        orchestrator = make(config=Config(enabled=True, dry_run=False,
+                                          auto_travel=False))
+        state = self.trader(currentLocationId="farm_3")
+        candidates = orchestrator.build_candidates(
+            state, build_snapshot([]), {}, wallet_id="w", cities=self.cities())
+        self.assertEqual([c for c in candidates if c.action == "startTravel"], [])
+
+    def test_a_parked_route_is_not_offered_again(self):
+        orchestrator = make()
+        state = self.trader()
+        trade = self.trade_in(orchestrator.build_candidates(
+            state, build_snapshot([]), {}, wallet_id="w", cities=self.cities()))
+        orchestrator.rejections.park("w", "dispatchCaravan", trade.params,
+                                     "not enough stock")
+        self.assertIsNone(self.trade_in(orchestrator.build_candidates(
+            state, build_snapshot([]), {}, wallet_id="w", cities=self.cities())))
+
+    def test_the_dispatch_carries_its_outlay_into_the_ledger(self):
+        api = FakeApi()
+        orchestrator = make(api=api)
+        state = self.trader()
+        trade = self.trade_in(orchestrator.build_candidates(
+            state, build_snapshot([]), {}, wallet_id="w", cities=self.cities()))
+        result = orchestrator.execute(None, trade, state)
+        self.assertEqual(result["goldSpent"], trade.gold_cost)

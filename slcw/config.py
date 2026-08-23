@@ -149,6 +149,24 @@ class Config:
     farming_gold_hours: int = field(default_factory=lambda: _int("SLCW_FARMING_GOLD_HOURS", 8))
     # Keep this much gold in reserve; gold-funded actions may not dip below it.
     gold_reserve: int = field(default_factory=lambda: _int("SLCW_GOLD_RESERVE", 500))
+    # What one point of experience is worth in gold. Every action is scored in
+    # gold per hour, so this single number decides how a fight that pays only
+    # XP ranks against a trade that pays only gold. It sat at 8 while XP was
+    # the whole plan — grade 3 needs level 30 — and at 8 a battle and a caravan
+    # leg scored within a tenth of each other, which is a coin toss, not a
+    # decision. Lowered to 5 on 2026-08-23 to put gold first, deliberately:
+    # caravan trade now outranks a fight while a wallet has the energy for it,
+    # and energy scarcity pricing hands the wallet back to fighting once the
+    # bar runs down, so levelling continues rather than stopping.
+    # Gold-equivalent of one xp point; kept equal to economy.DEFAULT_XP_GOLD,
+    # which explains the number. Lower favours gold, higher favours levelling.
+    xp_gold: float = field(default_factory=lambda: _float("SLCW_XP_GOLD", 5.0))
+    # Caravan trading only opens once a wallet has the levels for it. Below
+    # this the engine behaves exactly as it did before.
+    caravan_min_level: int = field(default_factory=lambda: _int("SLCW_CARAVAN_MIN_LEVEL", 20))
+    # Trading reads the whole `cities` collection; twelve documents that change
+    # slowly, so it is cached far longer than the market book.
+    cities_ttl_seconds: int = field(default_factory=lambda: _int("SLCW_CITIES_TTL_SECONDS", 900))
     # Optional home location the fleet travels back to when idle elsewhere.
     home_location: str = field(default_factory=lambda: os.environ.get("SLCW_HOME_LOCATION", ""))
     # Let the engine relocate between gathering sites and workshop cities.

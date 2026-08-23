@@ -66,6 +66,27 @@ def _extract_summary(action: str, result: dict) -> dict:
             return {}
         return {"type": "equipment_sale", "gold": int(revenue),
                 "item": str(result.get("templateId") or "")}
+    if action == "dispatchCaravan":
+        # Half of a caravan: the gold that leaves. The sale arrives later under
+        # finishActivity, so the two rows net out to the trade's real profit.
+        spent = result.get("goldSpent")
+        if spent is None:
+            return {}
+        return {"type": "caravan_dispatch", "gold": -int(spent)}
+    if action == "finishActivity":
+        # Everything else that settles here answers with a "rewardSummary". A
+        # caravan does not: it returns {"type": "caravan", "gold", "reputation"}
+        # in its own right, and the default read at the bottom would have
+        # dropped the largest single payment the fleet collects.
+        summary = result.get("rewardSummary")
+        if isinstance(summary, dict) and summary:
+            return summary
+        reward = result.get("reward") if isinstance(result.get("reward"), dict) else result
+        if reward.get("type") == "caravan":
+            return {"type": "caravan",
+                    "gold": int(reward.get("gold", 0) or 0),
+                    "reputation": int(reward.get("reputation", 0) or 0)}
+        return {}
     if action == "claimTaskReward":
         # Documented in tasks.py as {goldAwarded, allTasksCompleted} — also not
         # "rewardSummary", found while checking every action against the same

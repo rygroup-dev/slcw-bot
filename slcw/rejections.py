@@ -59,6 +59,9 @@ PARKABLE = frozenset({
     "generateClanQuest",
     "submitQuestResources",
     "makeDonation",
+    # A caravan route goes bad in ways that stay bad for a while: the warehouse
+    # sold out, the destination filled up, the road was refused.
+    "dispatchCaravan",
 })
 
 

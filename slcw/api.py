@@ -44,8 +44,18 @@ class GameApi:
         rows = payload if isinstance(payload, list) else payload.get("value", payload)
         if not isinstance(rows, list):
             return []
-        return [decode_document(row["document"]) for row in rows
-                if isinstance(row, dict) and row.get("document")]
+        documents = []
+        for row in rows:
+            if not isinstance(row, dict) or not row.get("document"):
+                continue
+            document = decode_document(row["document"])
+            # Firestore keeps the key in the path, not in the fields, and some
+            # collections need it: a city document says nothing about which
+            # city it is. Recorded under a name no collection uses for a field
+            # of its own, so nothing real is ever shadowed.
+            document.setdefault("_id", row["document"]["name"].rsplit("/", 1)[-1])
+            documents.append(document)
+        return documents
 
     def query_all(self, session, collection: str, page_size: int = 500,
                   max_pages: int = 12) -> list[dict]:
@@ -182,6 +192,26 @@ class GameApi:
         slots, and refused per item type once the shop's stock of it is full.
         """
         return self._call(session, "sellEquipmentItem", {"instanceId": instance_id})
+
+    def dispatch_caravan(self, session, template_id: str, quantity: int,
+                         destination_id: str) -> dict:
+        """Buy a load from the local warehouse and carry it somewhere it is short.
+
+        The gold leaves at dispatch and the sale settles on arrival, through
+        finishActivity, which returns {"type": "caravan", "gold": ...,
+        "reputation": ...}. The character travels with the load and ends up at
+        the destination. Measured twice on 2026-08-23, neither run robbed:
+        Ostrim to Virtan returned 33,600 on 27,890, and Virtan to Greyholm
+        59,599 on 54,000. Reputation came to 1% of the sale both times.
+
+        Refused with "Caravans from cities must go to Hub" for any city-to-city
+        route; only the hub may send a load to an ordinary city.
+        """
+        return self._call(session, "dispatchCaravan", {
+            "templateId": template_id,
+            "quantity": int(quantity),
+            "destinationId": destination_id,
+        })
 
     def delete_inventory_item(self, session, slot_index: int) -> dict:
         """Destroy one inventory slot's contents. There is no undo.

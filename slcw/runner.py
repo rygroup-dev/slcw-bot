@@ -74,6 +74,11 @@ class Fleet:
         self.sessions = SessionManager(config)
         self.status: dict = {}
         self.market: MarketSnapshot = market_mod.load_snapshot()
+        # City documents, for caravan routing. Only wallets old enough to trade
+        # ever ask for them, so the fleet pays for this read once an hour at
+        # most and not at all until someone reaches the level gate.
+        self.cities: dict = {}
+        self.cities_taken_at: float = 0.0
         self.force_flags: dict = {}
         # Most recent hunt-task status seen, for the Telegram view.
         self.last_task_status = None
@@ -288,6 +293,8 @@ class Fleet:
 
             state = api.get_player(session)
             self.refresh_market(api, session)
+            if state.level >= self.config.caravan_min_level:
+                self.refresh_cities(api, session)
 
             # Refining, chest opening and equipment all need the inventory, so
             # it is fetched once and shared rather than read three times.
@@ -320,7 +327,7 @@ class Fleet:
             orchestrator = Orchestrator(config=self.config, api=api, rng=rng)
             decision = orchestrator.decide_and_act(
                 wallet, session, state, self.market, holdings, task_status,
-                inventory, clan_context=clan_context)
+                inventory, clan_context=clan_context, cities=self.cities)
 
             status.last_run_ts = int(time.time())
             status.last_action = decision.action
@@ -590,6 +597,32 @@ class Fleet:
             quantity = int(item.get("quantity", 0) or 0)
             if bid * quantity >= self.config.rich_drop_gold:
                 self.alerts.rich_drop(status.wallet_id, item["id"], quantity, bid * quantity)
+
+    def refresh_cities(self, api, session) -> None:
+        """Keep one shared picture of the twelve city warehouses.
+
+        Caravan prices come straight off these documents, so a stale copy sends
+        a wallet on a sixteen-minute haul against a spread that has already
+        closed. They move slowly and there are only twelve of them, so one
+        fleet-wide read every fifteen minutes is enough — and it is shared, not
+        per wallet, because thirty wallets reading the same twelve documents
+        every cycle is thirty times the traffic for the same answer.
+        """
+        if self.cities and time.time() - self.cities_taken_at < self.config.cities_ttl_seconds:
+            return
+        try:
+            rows = api.query_all(session, "cities")
+        except (TransportError, ApiError):
+            return
+        found = {}
+        for row in rows:
+            city_id = row.get("id") or row.get("_id")
+            if city_id:
+                found[city_id if str(city_id).startswith("city_") else f"city_{city_id}"] = row
+        if not found:
+            return
+        self.cities = found
+        self.cities_taken_at = time.time()
 
     def refresh_market(self, api, session) -> None:
         if self.market.is_fresh(self.config.market_ttl_seconds):

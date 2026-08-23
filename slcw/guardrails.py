@@ -153,40 +153,6 @@ ALLOWED_CALLABLES = frozenset({
     # but it is far too large a commitment for a decision loop, hence the
     # operator gate rather than the allowlist alone.
     "createClan",
-    # Caravan trade, measured 2026-08-23. It buys a city's warehouse output
-    # with gold, hauls it to a city that lists that good as a production input,
-    # and sells it there. Both prices come from one function in the client:
-    #
-    #   base = {runic_alloy 4800, crystal_core 3700, frozen_vein 3500,
-    #           aqua_vitae 3000, living_timber 1900, aether_fragment 4000,
-    #           volt_essence 3800, runestone 5500, chronicle_page 4200,
-    #           battle_ember 4500, imperial_seal 3500}
-    #   half = warehouseCapacity / 2
-    #   unit = ceil(base * max(qty <= half ? 2 - qty/half
-    #                                      : 1 - 0.5*min((qty-half)/half, 1), 0.5))
-    #
-    # so a starved warehouse pays 2x base and a glutted one 0.5x. Selling into
-    # city_2, the trade hub, is a flat floor(0.8 * base) instead, which makes
-    # the hub the worst destination rather than the best. The destination's
-    # taxRate comes off the profit, never the principal. Capacity is
-    # floor(10 + 2*merchantGuild.talents.capacity + mount cargo) — ten units
-    # without a pass — and a dispatch costs max(2, 20 - 0.18*talents.logistics)
-    # energy, so twenty for us. The cargo is bought from the warehouse with
-    # gold and never touches the bag.
-    #
-    # Priced against the live `cities` collection the spread is not small:
-    # Ostrim -> Greyholm moves ten chronicle_page bought at 2,840 into a
-    # warehouse holding none of them, which pays 8,397 — about 55,000 gold for
-    # twenty energy. A battle returns roughly 185 gold for one energy.
-    #
-    # It is operator-only rather than allowlisted outright because the loss
-    # side is still unmeasured: cities carry a `caravanRobberyDefenseBonus`,
-    # so caravans can evidently be robbed, but no chance, no trigger and no
-    # loss appear anywhere in the client — it is resolved server-side inside
-    # finishActivity. build_candidates does not emit this, so no unattended
-    # wallet can decide to trade on its own; it is reachable only from an
-    # explicit operator run, which is how the robbery gets measured at all.
-    "dispatchCaravan",
     # Accepts or rejects a join request to the operator's own clan.
     "resolveApplication",
     # Starts the clan's one free weekly quest. In a clan of the operator's own
@@ -199,6 +165,37 @@ ALLOWED_CALLABLES = frozenset({
     "completeCitizenshipQuest",
 
     # --- activities funded by energy, gold, or materials ----------------
+    # Caravan trade, measured live 2026-08-23 and again after the first model
+    # of it turned out to be wrong. It buys a warehouse's output with gold —
+    # the cargo never touches the bag — hauls it at twenty seconds per unit of
+    # map distance, and sells it on arrival through finishActivity.
+    #
+    # A workshop prices its shelf: ceil(base * (2 - held/half)) while held is
+    # under half of warehouseCapacity, sliding to half base when it is full. A
+    # whole load is priced once, off the shelf as it stands. Virtan, the one
+    # trade hub, is not a warehouse at all but a market maker on a flat 20%
+    # spread: it sells at 1.2x base and buys at 0.8x, whatever it is holding,
+    # and takes no tax on what it buys. Reading its ask off the price curve
+    # instead overstated every route out of it fivefold, which is why the
+    # numbers here are measured rather than derived.
+    #
+    # The server also decides the roads: "Caravans from cities must go to Hub".
+    # From an ordinary city the only legal destination is Virtan; from Virtan,
+    # any city that consumes the good. City to city is refused outright.
+    #
+    # Two clean runs, neither robbed: ten chronicle_page Ostrim -> Virtan cost
+    # 27,890 and returned 33,600; ten battle_ember Virtan -> Greyholm cost
+    # 54,000 and returned 59,599. Call it 5k-11k profit for twenty energy —
+    # several times what the same energy earns in the arena, and the reason
+    # slcw/caravan.py prices every leg against the live `cities` documents
+    # before the call rather than trusting a route table.
+    #
+    # Robbery is the one thing still unmeasured: cities carry a
+    # `caravanRobberyDefenseBonus`, so it exists, but no chance and no loss
+    # appear anywhere in the client — it is resolved server-side. It is
+    # allowlisted anyway because a lost load costs the load, which the wallet
+    # already committed knowingly, and both measured runs arrived intact.
+    "dispatchCaravan",
     "startRelax",
     "startProduction",
     "startFarming",

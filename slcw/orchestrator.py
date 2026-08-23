@@ -12,6 +12,7 @@ from . import combat as combat_mod
 from .combat import CombatMemory, monster_level, select_monster
 from . import discard as discard_mod
 from . import blackmarket as bm_mod
+from . import caravan as caravan_mod
 from . import clan as clan_mod
 from . import evolution as evo_mod
 from .quests import NewbieQuestMemory
@@ -109,22 +110,28 @@ class Decision:
 class Orchestrator:
     config: Config
     api: object
-    economy: econ.Economy = field(default_factory=econ.Economy)
+    economy: econ.Economy | None = None
     combat: CombatMemory = field(default_factory=CombatMemory)
     quests: NewbieQuestMemory = field(default_factory=NewbieQuestMemory)
     rejections: RejectionMemory = field(default_factory=RejectionMemory)
     rng: random.Random = field(default_factory=random.Random)
 
+    def __post_init__(self):
+        # The price of XP is a fleet policy, not a constant, so it comes from
+        # the config unless a caller supplied a whole economy of its own.
+        if self.economy is None:
+            self.economy = econ.Economy(xp_gold=self.config.xp_gold)
+
     def decide_and_act(self, wallet: dict, session, state, market=None,
                        holdings=None, task_status=None,
-                       inventory=None, clan_context=None) -> Decision:
+                       inventory=None, clan_context=None, cities=None) -> Decision:
         decision = Decision(wallet_id=wallet["id"], dry_run=self.config.dry_run)
 
         try:
             candidates = self.build_candidates(
                 state, market, holdings, task_status=task_status,
                 inventory=inventory, wallet_id=wallet["id"],
-                clan_context=clan_context)
+                clan_context=clan_context, cities=cities)
             decision.considered = candidates
             if not candidates:
                 decision.action = "idle"
@@ -225,7 +232,7 @@ class Orchestrator:
     def build_candidates(self, state, market=None, holdings=None,
                          include_travel: bool = True, task_status=None,
                          inventory=None, wallet_id: str | None = None,
-                         clan_context=None) -> list:
+                         clan_context=None, cities=None) -> list:
         # Free value first: an expired activity is reward already earned, and
         # unclaimed level rewards cost nothing.
         if state.activity is not None and state.activity.is_settleable:
@@ -566,6 +573,15 @@ class Orchestrator:
                 if hunt is not None:
                     candidates.append(hunt)
 
+        # Trading competes with fighting rather than replacing it. A caravan
+        # costs twenty energy against a battle's one, so once the bar runs down
+        # the scarcity price on energy hands the wallet back to fighting on its
+        # own — which is why levelling continues even with XP priced to put
+        # gold first.
+        trade = self._caravan_candidate(state, cities, wallet_id)
+        if trade is not None:
+            candidates.append(trade)
+
         # Resting is worth considering even at decent health when nothing else is
         # affordable, because it converts idle time into future capacity.
         if not candidates and state.health < state.max_health:
@@ -601,6 +617,81 @@ class Orchestrator:
             return 1
         affordable = int(state.energy) // int(target.energy_cost)
         return max(1, min(affordable, MAX_PROJECTED_REPEATS))
+
+    def _caravan_candidate(self, state, cities, wallet_id=None):
+        """Buy a load where it is cheap and sell it where it is short.
+
+        Two things gate this and neither is arbitrary. The level gate is the
+        operator's: below it a wallet plays exactly as it did before, because
+        levelling is still what unlocks grade 3. Standing in a city is the
+        game's: `dispatchCaravan` answers "Caravans from cities must go to Hub"
+        and the caravan page refuses outright anywhere else, so a wallet in the
+        Borderlands has to walk first, and that walk competes on score like
+        everything else rather than being forced.
+
+        The load is priced against the live warehouses before the call, so a
+        route that has stopped paying is simply not offered.
+        """
+        if state.level < self.config.caravan_min_level or not cities:
+            return None
+        if state.energy < caravan_mod.DISPATCH_ENERGY:
+            return None
+        budget = self.spendable_gold(state, wallet_id)
+        if budget <= 0:
+            return None
+
+        here = state.location_id
+        if here in cities:
+            leg = caravan_mod.best_leg(here, cities, budget)
+            if leg is not None:
+                params = {"templateId": leg.template_id,
+                          "quantity": leg.quantity,
+                          "destinationId": leg.destination_id}
+                if self._parked(wallet_id, "dispatchCaravan", params):
+                    return None
+                return econ.ActionScore(
+                    action="dispatchCaravan",
+                    params=params,
+                    # Revenue in, principal out: what survives is the profit,
+                    # which is what the score is meant to rank on.
+                    gold_equivalent=leg.profit + leg.cost,
+                    gold_cost=leg.cost,
+                    energy_cost=caravan_mod.DISPATCH_ENERGY,
+                    duration_seconds=max(leg.travel_seconds, 1),
+                    reason=leg.describe(),
+                    detail={"template_id": leg.template_id,
+                            "quantity": leg.quantity,
+                            "destination_id": leg.destination_id,
+                            "cost": leg.cost,
+                            "expected_profit": leg.profit},
+                )
+
+        if not self.config.auto_travel:
+            return None
+
+        # Nowhere to trade from where we stand. Going to the city that would
+        # pay the most is worth proposing, but only at its true price: the walk
+        # earns nothing by itself, so the profit is spread over the walk and
+        # the haul together and ranked against staying put.
+        choice = caravan_mod.best_origin(cities, budget)
+        if choice is None:
+            return None
+        destination, leg = choice
+        if destination == here:
+            return None
+        params = {"destinationId": destination}
+        if self._parked(wallet_id, "startTravel", params):
+            return None
+        walk = world.travel_seconds(here, destination) / 2 or 1
+        return econ.ActionScore(
+            action="startTravel",
+            params=params,
+            gold_equivalent=leg.profit,
+            energy_cost=0,
+            duration_seconds=walk + leg.travel_seconds,
+            reason=(f"to {world.name_of(destination)} to trade — "
+                    f"{leg.describe()}"),
+        )
 
     def spendable_gold(self, state, wallet_id: str | None = None) -> int:
         """Gold this wallet may commit, after every reserve that applies to it.
@@ -1030,6 +1121,17 @@ class Orchestrator:
             return self.api.purchase_crafting_item(session, candidate.params)
         if action == "startTravel":
             return self.api.start_travel(session, candidate.params["destinationId"])
+        if action == "dispatchCaravan":
+            p = candidate.params
+            result = self.api.dispatch_caravan(
+                session, p["templateId"], p["quantity"], p["destinationId"])
+            # The load is paid for now and sold on arrival, through
+            # finishActivity. Recording only the arrival would credit the
+            # wallet the whole sale and never the gold it was bought with, so
+            # the outlay rides along in the result for the ledger to subtract.
+            if isinstance(result, dict):
+                result.setdefault("goldSpent", int(candidate.gold_cost))
+            return result
         if action == "completeNewbieQuest":
             return self.api.complete_newbie_quest(session)
         if action == "acceptTask":

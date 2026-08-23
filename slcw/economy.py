@@ -20,9 +20,13 @@ from dataclasses import dataclass, field
 
 INFINITE = float("inf")
 
-# Gold-equivalent of one XP point. XP has no market price, so this is a policy dial:
-# raise it to favour leveling, lower it to favour raw gold accumulation.
-DEFAULT_XP_GOLD = 8.0
+# Gold-equivalent of one XP point. XP has no market price, so this is a policy
+# dial: raise it to favour leveling, lower it to favour raw gold accumulation.
+# Held at 5 since caravans opened. At 8 a fight and a haul scored within a
+# tenth of each other, which meant the fleet kept fighting for xp it could earn
+# later with the gold a haul brings now; at 5 trading wins while the energy
+# lasts and the wallet goes back to fighting as the bar empties.
+DEFAULT_XP_GOLD = 5.0
 
 # Fallback gold value of one energy point, used before enough data accumulates.
 # Production yields 1000 gold for 10 energy, so 100 is the observed floor.

@@ -717,7 +717,6 @@ allowed or denied **with a recorded reason**, so none is left to chance.
 | `placeGoldOrder`, `createOrder`, `cancelOrder` | the bot never trades on its own |
 | `evolveGrade`, `sharpenItem`, `deleteInventoryItem` | consumes items irreversibly |
 | `payCityEntryFee`, `buyLevel`, arena | costed, with no measured return |
-| `dispatchCaravan` | profit measured; the robbery loss is not |
 | `handleReferral` | binds accounts together; an operator decision |
 
 Crossed spreads are surfaced with the numbers so **you** can act. The bot will not
@@ -820,6 +819,9 @@ See [`.env.example`](.env.example) for the annotated full list.
 | `SLCW_REST_HP_RATIO` | `0.55` | rest below this fraction of health |
 | `SLCW_GOLD_RESERVE` | `500` | gold-funded actions never spend below this |
 | `SLCW_AUTO_TRAVEL` | `true` | let the engine relocate along the production chain |
+| `SLCW_XP_GOLD` | `5.0` | gold one xp point is worth. Lower favours gold, higher favours levelling |
+| `SLCW_CARAVAN_MIN_LEVEL` | `20` | level a wallet must reach before it may trade. Below it, nothing changes |
+| `SLCW_CITIES_TTL_SECONDS` | `900` | how long warehouse prices are reused before being re-read |
 | `SLCW_DISCARD_JUNK` | `false` | destroy drops nothing in the game can use, once the bag is full |
 | `SLCW_CLAN_ENABLED` | `true` | clan participation at all |
 | `SLCW_CLAN_DONATE_GOLD` | `false` | donate gold to the treasury (1,000 gold = 1 DKP, once a day). Off because the treasury is the leader's to distribute |
@@ -918,16 +920,28 @@ irreversible spend the engine will not make on its own.
 **Expeditions, arena and mounts are unmapped.** The callables exist and are denied until
 their reward and cost models are measured, rather than enabled on a guess.
 
-**Caravans are mapped but still denied.** Each city's warehouse turns out one refined
-good and consumes two others, and `dispatchCaravan` buys the first city's output with
-gold and sells it into a city that is short of it. Both prices come from one formula in
-the client — a warehouse holding nothing pays twice the base price, a full one pays half
-— so the spread is readable before dispatching, and priced against the live cities on
-2026-08-23 the best route returned 57,259 gold for twenty energy and 220 seconds, against
-roughly 185 gold per energy from a battle. It stays denied on the one thing the client
-does not show: cities carry a `caravanRobberyDefenseBonus`, so a caravan can evidently be
-robbed, but the chance and the loss are resolved server-side and have never been seen.
-The profit is measured; the downside is not, and one is not a reason to skip the other.
+**Caravans open at level 20.** Each city's warehouse turns out one refined good and
+consumes two others, and `dispatchCaravan` buys a warehouse's output with gold, hauls it
+at twenty seconds per unit of map distance, and sells it on arrival. The cargo never
+touches the bag: a caravan pays in gold and reputation, not in items.
+
+Two prices, and only one of them follows the client's curve. A workshop prices its shelf
+— twice base when it is empty, half base when it is full, and a whole load is priced once
+off the shelf as it stands. Virtan, the single trade hub, is a market maker instead: a
+flat 20% spread either side of base regardless of stock, and no tax on what it buys. The
+roads are the server's too — *"Caravans from cities must go to Hub"* — so the shape of
+the trade is a spoke, out from the hub loaded and back with whatever the city makes.
+
+Measured twice on 2026-08-23, neither run robbed: ten chronicle_page Ostrim → Virtan cost
+27,890 and returned 33,600; ten battle_ember Virtan → Greyholm cost 54,000 and returned
+59,599. That is 5k–11k profit for twenty energy, several times what the same energy earns
+fighting. Every leg is priced against the live `cities` documents before the call, so a
+route that has stopped paying is never offered.
+
+One thing is still unmeasured: cities carry a `caravanRobberyDefenseBonus`, so caravans
+can evidently be robbed, but the chance and the loss are resolved server-side and have
+never been seen. A lost load costs the load the wallet already committed, which is why
+this is allowed while a diamond spend is not.
 
 ---
 
