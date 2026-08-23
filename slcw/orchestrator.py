@@ -453,11 +453,18 @@ class Orchestrator:
             if (in_borderlands and task_status.can_fight
                     and state.energy >= econ.BATTLE_ENERGY
                     and state.health_ratio >= BATTLE_MIN_HEALTH_RATIO):
-                task = task_status.task
-                return [econ.free_candidate(
-                    "startTaskBattle", {"monsterId": task.monster_id},
-                    f"task battle {task.kills_progress}/{task.kills_required} "
-                    f"vs {task.monster_id} for {task.gold_reward:,}g")]
+                # The chain is still returned on its own — opening the whole
+                # ranking here would let a farming relocation priced at bids
+                # the bot cannot collect outbid fighting altogether, which is
+                # the bug the comment below records. What has changed is that
+                # the task no longer wins by default: the server picks its
+                # monster and some of them are ruinous — 127 hit points a kill
+                # against a werewolf where a troll costs 28 for the same
+                # experience — and at two kills to a rest that is most of the
+                # fleet's day spent recovering. So the task kill is priced
+                # against the fight the wallet would otherwise pick, and the
+                # cheaper one goes.
+                return [self._fight_choice(state, market, task_status.task)]
             if in_borderlands and task_status.can_accept:
                 return [econ.free_candidate(
                     "acceptTask", {},
@@ -567,6 +574,7 @@ class Orchestrator:
                         expected_drops=expected_drops,
                         market_stale=stale,
                         hp_cost=learned.avg_damage if has_learned else None,
+                        xp_estimate=learned.avg_xp if has_learned else None,
                     ))
 
                 # Passive and location-independent, unlike battle — offered
@@ -628,6 +636,78 @@ class Orchestrator:
             return 1
         affordable = int(state.energy) // int(target.energy_cost)
         return max(1, min(affordable, MAX_PROJECTED_REPEATS))
+
+    def _fight_choice(self, state, market, task):
+        """The task's kill or an ordinary one, whichever is cheaper per hour.
+
+        Both are priced the same way and from the same record: the monster's
+        own measured experience, drops and — the part that matters here —
+        damage taken. The task carries its completion reward spread over the
+        kills it needs, so a task on a cheap monster still wins; one on a
+        monster that costs half a health bar a kill does not, and the wallet
+        fights something else until the health economics change.
+
+        Deliberately narrow: only these two candidates are compared, because
+        everything else in the ranking is priced at market bids this bot has no
+        way to collect, and letting those compete here is what once sent a
+        wallet on a twenty-minute walk to a farm it could not sell from.
+        """
+        chain = self._task_battle_candidate(state, market, task)
+        alternative = self._plain_battle_candidate(state, market)
+        if alternative is None:
+            return chain
+        rank = [self.economy.score_action(c, state.energy, state.max_energy)
+                for c in (chain, alternative)]
+        return max(rank, key=lambda c: c.score)
+
+    def _monster_pricing(self, monster_id: str, market):
+        """Everything the scorer needs about one monster: xp, drops, damage."""
+        stale = market is None or not market.is_fresh(self.config.market_ttl_seconds)
+        learned = self.combat.models.get(monster_id)
+        seen = bool(learned and learned.battles)
+        drops = learned.avg_drops() if seen else EXPECTED_DROPS.get(monster_id)
+        values = {}
+        if not stale:
+            for item in (drops or {}):
+                bid = market.best_bid(item)
+                if bid:
+                    values[item] = bid
+        return {
+            "xp": learned.avg_xp if seen else econ.BATTLE_XP,
+            "hp_cost": learned.avg_damage if seen else None,
+            "expected_drops": drops,
+            "drop_values": values,
+            "market_stale": stale,
+        }
+
+    def _task_battle_candidate(self, state, market, task):
+        pricing = self._monster_pricing(task.monster_id, market)
+        candidate = econ.task_battle_candidate(
+            task.monster_id, self.economy,
+            xp_estimate=pricing.pop("xp"),
+            gold_per_kill=task.gold_per_kill,
+            **pricing)
+        candidate.reason = (f"task battle {task.kills_progress}/{task.kills_required} "
+                            f"vs {task.monster_id} for {task.gold_reward:,}g — "
+                            + candidate.reason)
+        return candidate
+
+    def _plain_battle_candidate(self, state, market):
+        """The fight the wallet would pick if there were no task at all."""
+        if state.energy < econ.BATTLE_ENERGY:
+            return None
+        stats = build_mod.derive(state.attributes, state.equipment)
+        monster = select_monster(
+            None, state.level, state.health_ratio,
+            weapon_power=stats.weapon_power,
+            physical_defense=stats.physical_defense,
+            current_health=state.health,
+            memory=self.combat, market=market, rng=self.rng)
+        if not monster:
+            return None
+        pricing = self._monster_pricing(monster, market)
+        return econ.battle_candidate(
+            monster, self.economy, xp_estimate=pricing.pop("xp"), **pricing)
 
     def _caravan_candidate(self, state, cities, holdings=None, wallet_id=None):
         """Buy a load where it is cheap and sell it where it is short.

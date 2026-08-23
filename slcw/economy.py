@@ -156,15 +156,19 @@ def production_candidate(cycles: int = 1) -> ActionScore:
 
 def battle_candidate(monster_id: str, economy: Economy, drop_values: dict | None = None,
                      expected_drops: dict | None = None, market_stale: bool = False,
-                     hp_cost: float | None = None) -> ActionScore:
+                     hp_cost: float | None = None,
+                     xp_estimate: float | None = None) -> ActionScore:
     """Value a battle as XP plus the market value of its expected drops.
 
-    `hp_cost` is this monster's own measured damage when it has been fought;
-    BATTLE_HP_LOSS is only the opening guess for one that has not. Scoring
-    every monster at the same flat six hit points made the hardest fight in
-    the zone look as cheap as the easiest, which is how the fleet came to
-    spend most of its day resting.
+    `hp_cost` and `xp_estimate` are this monster's own measured damage and
+    experience when it has been fought; BATTLE_HP_LOSS and BATTLE_XP are only
+    the opening guesses for one that has not. Scoring every monster at the same
+    flat six hit points made the hardest fight in the zone look as cheap as the
+    easiest, which is how the fleet came to spend most of its day resting — and
+    scoring them all at the same flat experience undersells a level 24 kill by
+    a factor of three against the task chain, which does count its own.
     """
+    xp = BATTLE_XP if xp_estimate is None else xp_estimate
     drops = expected_drops or {"spiderfang": 1.5}
     values = drop_values or {}
     drop_gold = sum(values.get(item, 0.0) * quantity for item, quantity in drops.items())
@@ -172,12 +176,45 @@ def battle_candidate(monster_id: str, economy: Economy, drop_values: dict | None
     return ActionScore(
         action="battle",
         params={"monsterId": monster_id},
-        gold_equivalent=BATTLE_XP * economy.xp_gold + drop_gold,
+        gold_equivalent=xp * economy.xp_gold + drop_gold,
         energy_cost=BATTLE_ENERGY,
         hp_cost=BATTLE_HP_LOSS if hp_cost is None else max(0, round(hp_cost)),
         duration_seconds=BATTLE_SECONDS,
-        reason=(f"{BATTLE_XP} xp @ {economy.xp_gold:g}g + drops worth {drop_gold:.0f}g"
+        reason=(f"{xp:.0f} xp @ {economy.xp_gold:g}g + drops worth {drop_gold:.0f}g"
                 + (" (market data stale, drops valued at 0)" if market_stale else "")),
+        degraded=market_stale,
+    )
+
+
+def task_battle_candidate(monster_id: str, economy: Economy, xp_estimate: float,
+                          gold_per_kill: float, drop_values: dict | None = None,
+                          expected_drops: dict | None = None,
+                          market_stale: bool = False,
+                          hp_cost: float | None = None) -> ActionScore:
+    """Value one kill on the hunt-task chain, against the same yardstick as any
+    other fight.
+
+    The chain used to be free value at infinite score, which was right while
+    its 2,500 gold a task was the only gold the bot had ever banked. It is not
+    any more, and the server picks the monster: a task on a werewolf costs 127
+    hit points a kill where a troll costs 28 for the same experience, and at
+    two kills to a rest that is most of the fleet's day spent recovering. The
+    task's own reward is spread over the kills it needs, so a cheap task still
+    outbids an ordinary fight — and an expensive one loses, which is the point.
+    """
+    drops = expected_drops or {}
+    values = drop_values or {}
+    drop_gold = sum(values.get(item, 0.0) * quantity for item, quantity in drops.items())
+
+    return ActionScore(
+        action="startTaskBattle",
+        params={"monsterId": monster_id},
+        gold_equivalent=xp_estimate * economy.xp_gold + drop_gold + gold_per_kill,
+        energy_cost=BATTLE_ENERGY,
+        hp_cost=BATTLE_HP_LOSS if hp_cost is None else max(0, round(hp_cost)),
+        duration_seconds=BATTLE_SECONDS,
+        reason=(f"task kill vs {monster_id}: {xp_estimate:.0f} xp @ {economy.xp_gold:g}g "
+                f"+ {gold_per_kill:,.0f}g of the task's reward"),
         degraded=market_stale,
     )
 

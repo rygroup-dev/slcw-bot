@@ -135,6 +135,37 @@ class OrchestratorTests(unittest.TestCase):
         self.assertEqual(api.calls[0], ("startTaskBattle", {}))
         self.assertIn("4/10", decision.reason)
 
+    def test_a_ruinous_task_monster_loses_to_an_ordinary_fight(self):
+        """The server picks the task's monster, and some of them cost half a
+        health bar a kill for the same experience as one that costs a tenth."""
+        orchestrator = make(config=Config(enabled=True, dry_run=False), api=FakeApi())
+        # Same experience from both, and the task even pays 500 gold a kill —
+        # but one of them is eight times the damage.
+        orchestrator.combat.record_battle(
+            "forestspider_lvl1_2", {"winner": "player", "xp": 60},
+            turns=8, damage_taken=120)
+        for _ in range(3):
+            orchestrator.combat.record_battle(
+                "bigfrog_lvl7_2", {"winner": "player", "xp": 60},
+                turns=3, damage_taken=15)
+        orchestrator.rng.random = lambda: 1.0
+        status = self._status(hasActiveTask=True, task=RAW_TASK)
+        top = orchestrator.build_candidates(
+            self._state(), task_status=status, wallet_id="w1")[0]
+        self.assertEqual(top.action, "battle")
+
+    def test_a_cheap_task_monster_still_wins_on_its_own_reward(self):
+        orchestrator = make(config=Config(enabled=True, dry_run=False), api=FakeApi())
+        for _ in range(3):
+            orchestrator.combat.record_battle(
+                "forestspider_lvl1_2", {"winner": "player", "xp": 60},
+                turns=3, damage_taken=15)
+        orchestrator.rng.random = lambda: 1.0
+        status = self._status(hasActiveTask=True, task=RAW_TASK)
+        top = orchestrator.build_candidates(
+            self._state(), task_status=status, wallet_id="w1")[0]
+        self.assertEqual(top.action, "startTaskBattle")
+
     def test_active_task_battle_defers_to_rest_at_low_health(self):
         api = FakeApi()
         orchestrator = make(config=Config(enabled=True, dry_run=False), api=api)
