@@ -87,3 +87,48 @@ class DiscardDigestTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CaravanDigestTests(unittest.TestCase):
+    """Departures and arrivals, reported by name but not one message each."""
+
+    def setUp(self):
+        self.notifier = RecordingNotifier()
+        self.alerts = notify.Alerts(self.notifier)
+
+    def _flush(self):
+        self.alerts._caravan_since -= notify.CARAVAN_DIGEST_S + 1
+        self.alerts.flush_caravans()
+
+    def test_a_departure_waits_for_the_window(self):
+        self.alerts.caravan_left("wallet-01", 10, "runic_alloy", "Virtan", 25_510)
+        self.assertEqual(self.notifier.sent, [])
+
+    def test_both_halves_of_a_trip_arrive_in_one_message(self):
+        self.alerts.caravan_left("wallet-01", 10, "runic_alloy", "Virtan", 25_510)
+        self.alerts.caravan_home("wallet-01", 38_400, 384, net=12_890)
+        self._flush()
+        self.assertEqual(len(self.notifier.sent), 1)
+        text = self.notifier.sent[0]
+        self.assertIn("wallet-01</b> berangkat caravan", text)
+        self.assertIn("wallet-01</b> sudah balik caravan", text)
+        self.assertIn("25,510", text)
+        self.assertIn("+12,890", text)
+
+    def test_a_flood_is_counted_rather_than_listed(self):
+        for index in range(30):
+            self.alerts.caravan_left(f"wallet-{index:02d}", 10, "runic_alloy",
+                                     "Virtan", 25_510)
+        self._flush()
+        self.assertIn("+18 lagi", self.notifier.sent[0])
+
+    def test_an_arrival_without_its_outlay_still_reports_the_takings(self):
+        self.alerts.caravan_home("wallet-09", 15_200, 152)
+        self._flush()
+        self.assertIn("+15,200 gold", self.notifier.sent[0])
+        self.assertNotIn("bersih", self.notifier.sent[0])
+
+    def test_shutdown_does_not_swallow_what_was_collected(self):
+        self.alerts.caravan_left("wallet-01", 10, "runic_alloy", "Virtan", 25_510)
+        self.alerts.flush_caravans(force=True)
+        self.assertEqual(len(self.notifier.sent), 1)

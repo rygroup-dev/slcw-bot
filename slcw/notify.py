@@ -18,6 +18,13 @@ import urllib.request
 # away, which is the opposite of what an alert is for.
 DISCARD_DIGEST_S = 3600
 
+# Caravans are the one routine action the operator asked to watch, so they are
+# reported by name rather than only in the dashboard. A whole fleet trading
+# would still be a message every few seconds, so departures and arrivals are
+# collected into one short digest instead of a drip. Set to 0 to send each one
+# on its own.
+CARAVAN_DIGEST_S = 120
+
 
 class Notifier:
     def __init__(self, token: str, chat_id: str):
@@ -66,6 +73,9 @@ class Alerts:
         self._discards: list = []
         self._discard_lock = threading.Lock()
         self._discard_since = time.time()
+        self._caravans: list = []
+        self._caravan_lock = threading.Lock()
+        self._caravan_since = time.time()
 
     def _once(self, key: str) -> bool:
         """Rate-limit by event identity so a stuck condition alerts one time."""
@@ -175,6 +185,42 @@ class Alerts:
             f"({items} item, {wallets} wallet, {window / 60:.0f} menit)\n"
             f"{listing}\n\n"
             f"Rincian lengkap ada di <code>data/discards.jsonl</code>.")
+
+    # --- caravans ---------------------------------------------------------
+    def caravan_left(self, wallet_id: str, quantity: int, template_id: str,
+                     destination: str, cost: int) -> None:
+        self._caravan_note(
+            f"\U0001F69A <b>{wallet_id}</b> berangkat caravan · "
+            f"{quantity} {template_id} → {destination} · modal {cost:,}")
+
+    def caravan_home(self, wallet_id: str, gold: int, reputation: int,
+                     net: int | None = None) -> None:
+        profit = f" (bersih {net:+,})" if net is not None else ""
+        self._caravan_note(
+            f"\U0001F3E0 <b>{wallet_id}</b> sudah balik caravan · "
+            f"+{gold:,} gold{profit} · +{reputation} reputasi")
+
+    def _caravan_note(self, line: str) -> None:
+        with self._caravan_lock:
+            self._caravans.append(line)
+        self.flush_caravans()
+
+    def flush_caravans(self, force: bool = False) -> None:
+        """Send the collected departures and arrivals as one message."""
+        now = time.time()
+        with self._caravan_lock:
+            if not self._caravans:
+                self._caravan_since = now
+                return
+            if not force and now - self._caravan_since < CARAVAN_DIGEST_S:
+                return
+            pending, self._caravans = self._caravans, []
+            self._caravan_since = now
+        # Long enough to matter, short enough to read: anything past the cap is
+        # counted rather than listed, and the ledger has all of it anyway.
+        shown, rest = pending[:12], max(0, len(pending) - 12)
+        tail = f"\n… +{rest} lagi" if rest else ""
+        self.notifier.send("\U0001F42B <b>Caravan</b>\n" + "\n".join(shown) + tail)
 
     def low_energy_idle(self, wallet_id: str) -> None:
         if self._once(f"idle:{wallet_id}"):

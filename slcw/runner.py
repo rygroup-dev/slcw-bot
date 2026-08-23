@@ -15,7 +15,8 @@ import threading
 import time
 from dataclasses import dataclass, field
 
-from . import inventory as inv_mod, ledger, leveling, market as market_mod, scheduler, tasks
+from . import (inventory as inv_mod, ledger, leveling, market as market_mod,
+               scheduler, tasks, world)
 from .api import GameApi
 from .auth import AuthError, SessionManager
 from .config import DATA, Config
@@ -79,6 +80,9 @@ class Fleet:
         # most and not at all until someone reaches the level gate.
         self.cities: dict = {}
         self.cities_taken_at: float = 0.0
+        # What each wallet paid for the load it is carrying, so the arrival can
+        # be reported as profit rather than as takings.
+        self.caravan_outlay: dict = {}
         self.force_flags: dict = {}
         # Most recent hunt-task status seen, for the Telegram view.
         self.last_task_status = None
@@ -134,6 +138,7 @@ class Fleet:
         # Whatever was destroyed since the last digest is reported now rather
         # than dying with the process.
         self.alerts.flush_discards(force=True)
+        self.alerts.flush_caravans(force=True)
         for event in self._wake_events.values():
             event.set()
 
@@ -169,6 +174,7 @@ class Fleet:
                 # a tick here the last few stacks of a quiet night would sit
                 # unreported until the next one was thrown away.
                 self.alerts.flush_discards()
+                self.alerts.flush_caravans()
 
             except Exception:
                 logger.exception("fleet watchdog error")
@@ -374,6 +380,7 @@ class Fleet:
                 status.last_error = ""
                 if decision.result and not decision.dry_run:
                     ledger.record(wallet["id"], decision.action, decision.result)
+                    self._report_caravan(wallet["id"], decision)
 
             # Re-read the clock from the action we just took so the next wake time
             # follows the server, not our own cadence.
@@ -597,6 +604,39 @@ class Fleet:
             quantity = int(item.get("quantity", 0) or 0)
             if bid * quantity >= self.config.rich_drop_gold:
                 self.alerts.rich_drop(status.wallet_id, item["id"], quantity, bid * quantity)
+
+    def _report_caravan(self, wallet_id: str, decision) -> None:
+        """Tell the operator when a load goes out and when it comes back.
+
+        Both halves are reported from what actually happened rather than from
+        the plan: the departure carries the gold the server took, and the
+        arrival the gold it paid, so a leg that was priced wrong shows up as a
+        smaller number instead of a wrong one.
+        """
+        if decision.action == "dispatchCaravan":
+            detail = decision.detail or {}
+            cost = int(decision.result.get("goldSpent")
+                       or detail.get("cost") or 0)
+            self.caravan_outlay[wallet_id] = cost
+            self.alerts.caravan_left(
+                wallet_id, detail.get("quantity", 0),
+                detail.get("template_id", "?"),
+                world.name_of(detail.get("destination_id", "")),
+                cost)
+            return
+
+        if decision.action != "finishActivity":
+            return
+        reward = decision.result.get("rewardSummary")
+        if not isinstance(reward, dict) or not reward:
+            reward = decision.result
+        if reward.get("type") != "caravan":
+            return
+        gold = int(reward.get("gold", 0) or 0)
+        outlay = self.caravan_outlay.pop(wallet_id, None)
+        self.alerts.caravan_home(
+            wallet_id, gold, int(reward.get("reputation", 0) or 0),
+            None if outlay is None else gold - outlay)
 
     def refresh_cities(self, api, session) -> None:
         """Keep one shared picture of the twelve city warehouses.
