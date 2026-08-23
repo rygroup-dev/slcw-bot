@@ -69,6 +69,12 @@ CONSUMERS = {
 
 DEFAULT_CAPACITY = 500
 
+# The thinnest margin worth carrying. Prices are read from the `cities`
+# documents and can be minutes old by the time the wallet is standing in the
+# warehouse, so a leg that only just breaks even on paper is a leg that may
+# already have stopped paying. Every measured run cleared 10% or better.
+MIN_MARGIN_RATIO = 0.05
+
 
 def unit_price(template_id: str, held: float, warehouse_capacity: int = DEFAULT_CAPACITY) -> int:
     """What one unit costs or fetches at a warehouse holding `held` of it.
@@ -271,24 +277,31 @@ def best_leg(origin_id: str, cities: dict, gold: int,
                     leg = candidate
                     break
                 quantity -= 1
-            if leg is None or leg.profit <= 0:
+            if leg is None or leg.profit <= max(1, leg.cost * MIN_MARGIN_RATIO):
                 continue
             if best is None or leg.profit > best.profit:
                 best = leg
     return best
 
 
-def best_origin(cities: dict, gold: int, capacity: int = BASE_CAPACITY) -> tuple[str, Leg] | None:
-    """Which city is worth standing in, judged by the load it would let us send.
+def ranked_origins(cities: dict, gold: int,
+                   capacity: int = BASE_CAPACITY) -> list[tuple[str, Leg]]:
+    """Every city worth standing in and the load it would let us send, best first.
 
-    Used to decide where an idle trader should travel; the hub is usually the
-    answer, because the outbound leg is where the margin lives.
+    A list rather than a winner because the caller knows two things this does
+    not: how far away each city is, and that thirty wallets picking the same
+    argmax would all walk to the same warehouse.
     """
-    best: tuple[str, Leg] | None = None
+    found = []
     for city_id in cities:
         leg = best_leg(city_id, cities, gold, capacity)
-        if leg is None:
-            continue
-        if best is None or leg.profit > best[1].profit:
-            best = (city_id, leg)
-    return best
+        if leg is not None:
+            found.append((city_id, leg))
+    found.sort(key=lambda pair: -pair[1].profit)
+    return found
+
+
+def best_origin(cities: dict, gold: int, capacity: int = BASE_CAPACITY) -> tuple[str, Leg] | None:
+    """The single most profitable city to stand in, ignoring how far it is."""
+    ranked = ranked_origins(cities, gold, capacity)
+    return ranked[0] if ranked else None

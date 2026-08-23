@@ -684,22 +684,36 @@ class Orchestrator:
         # pay the most is worth proposing, but only at its true price: the walk
         # earns nothing by itself, so the profit is spread over the walk and
         # the haul together and ranked against staying put.
-        choice = caravan_mod.best_origin(cities, budget)
-        if choice is None:
+        # Judged by what the whole errand returns per second, walk included —
+        # the richest warehouse on the map is not worth a twenty-minute hike if
+        # a decent one is next door. Then chosen at random from everything
+        # within a fifth of the best rate, because thirty wallets taking the
+        # same argmax would all queue at the same warehouse and drain it, and
+        # the difference between first and fourth place is usually noise.
+        options = []
+        for city_id, leg in caravan_mod.ranked_origins(cities, budget):
+            if city_id == here:
+                continue
+            walk = world.travel_seconds(here, city_id) / 2
+            if walk == float("inf"):
+                continue
+            errand = max(walk + leg.travel_seconds, 1)
+            options.append((leg.profit / errand, city_id, leg, errand))
+        if not options:
             return None
-        destination, leg = choice
-        if destination == here:
-            return None
+        cutoff = max(rate for rate, _, _, _ in options) * 0.8
+        _, destination, leg, errand = self.rng.choice(
+            [option for option in options if option[0] >= cutoff])
+
         params = {"destinationId": destination}
         if self._parked(wallet_id, "startTravel", params):
             return None
-        walk = world.travel_seconds(here, destination) / 2 or 1
         return econ.ActionScore(
             action="startTravel",
             params=params,
             gold_equivalent=leg.profit,
             energy_cost=0,
-            duration_seconds=walk + leg.travel_seconds,
+            duration_seconds=errand,
             reason=(f"to {world.name_of(destination)} to trade — "
                     f"{leg.describe()}"),
         )

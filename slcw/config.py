@@ -166,7 +166,7 @@ class Config:
     caravan_min_level: int = field(default_factory=lambda: _int("SLCW_CARAVAN_MIN_LEVEL", 20))
     # Trading reads the whole `cities` collection; twelve documents that change
     # slowly, so it is cached far longer than the market book.
-    cities_ttl_seconds: int = field(default_factory=lambda: _int("SLCW_CITIES_TTL_SECONDS", 900))
+    cities_ttl_seconds: int = field(default_factory=lambda: _int("SLCW_CITIES_TTL_SECONDS", 300))
     # Optional home location the fleet travels back to when idle elsewhere.
     home_location: str = field(default_factory=lambda: os.environ.get("SLCW_HOME_LOCATION", ""))
     # Let the engine relocate between gathering sites and workshop cities.

@@ -9,7 +9,10 @@
 # the interactive setup wizard, which collects credentials, creates the encrypted
 # vault, adds your first wallet, and installs the systemd unit.
 #
-# Safe to re-run: existing credentials, vaults, and wallets are left alone.
+# Safe to re-run: on a machine that already holds a vault this never runs the
+# wizard, never creates or imports a wallet, and never writes to .env. It pulls
+# the latest source, reinstalls dependencies, runs the tests, and restarts the
+# service only if they pass.
 
 set -euo pipefail
 
@@ -65,12 +68,12 @@ if [ ! -f "$INSTALL_DIR/daemon.py" ]; then
 fi
 cd "$INSTALL_DIR"
 
-# An install that already has credentials and a vault is an update, not a first
-# run. Re-running the wizard there would ask for things already answered and
-# risks a second wallet nobody wanted.
+# An install that already has a vault is an update, not a first run. Re-running
+# the wizard there would ask for things already answered and risks a second
+# wallet nobody wanted — so the vault alone decides, not the Telegram token: an
+# operator who declined Telegram still has wallets that must not be touched.
 CONFIGURED=0
-if [ "$FRESH_CLONE" -eq 0 ] && [ -f .env ] && [ -f data/wallets.enc ] \
-   && grep -qs '^TELEGRAM_BOT_TOKEN=.\+' .env; then
+if [ "$FRESH_CLONE" -eq 0 ] && [ -f data/wallets.enc ]; then
   CONFIGURED=1
 fi
 

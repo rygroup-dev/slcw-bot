@@ -106,8 +106,11 @@ systemctl restart slcw-fleet
   5) Service        systemd unit installed, enabled, started
 ```
 
-Re-running `bash install.sh` is safe — anything already configured is detected and
-left alone.
+Re-running `bash install.sh` on a machine that already has a vault is an **update, not
+an install**: it pulls the latest source, reinstalls dependencies, runs the test suite,
+and restarts the service only if the tests pass. The wizard does not run, no wallet is
+created or imported, and `.env` is not written. A dirty working tree stops the pull
+rather than stashing your changes.
 
 > [!TIP]
 > **Start in dry-run.** `.env.example` ships with `SLCW_DRY_RUN=true`, so the first
@@ -821,7 +824,7 @@ See [`.env.example`](.env.example) for the annotated full list.
 | `SLCW_AUTO_TRAVEL` | `true` | let the engine relocate along the production chain |
 | `SLCW_XP_GOLD` | `5.0` | gold one xp point is worth. Lower favours gold, higher favours levelling |
 | `SLCW_CARAVAN_MIN_LEVEL` | `20` | level a wallet must reach before it may trade. Below it, nothing changes |
-| `SLCW_CITIES_TTL_SECONDS` | `900` | how long warehouse prices are reused before being re-read |
+| `SLCW_CITIES_TTL_SECONDS` | `300` | how long warehouse prices are reused before being re-read |
 | `SLCW_DISCARD_JUNK` | `false` | destroy drops nothing in the game can use, once the bag is full |
 | `SLCW_CLAN_ENABLED` | `true` | clan participation at all |
 | `SLCW_CLAN_DONATE_GOLD` | `false` | donate gold to the treasury (1,000 gold = 1 DKP, once a day). Off because the treasury is the leader's to distribute |
