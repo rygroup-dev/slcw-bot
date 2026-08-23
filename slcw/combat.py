@@ -279,12 +279,30 @@ def survivable(monster_id: str, weapon_power: float, physical_defense: float,
     return expected_loss < current_health * SURVIVAL_MARGIN
 
 
+# What one hit point of damage is worth, for ranking monsters against each
+# other. It matches economy.DEFAULT_HP_GOLD; the two are the same judgement
+# about the same currency, and are kept equal deliberately.
+HP_GOLD = 6.0
+
+
 def expected_value(monster_id: str, memory: "CombatMemory | None",
-                   market=None, xp_gold: float = 8.0) -> float:
-    """Gold-equivalent per battle, from what this monster has actually given.
+                   market=None, xp_gold: float = 8.0,
+                   hp_gold: float = HP_GOLD) -> float:
+    """Gold-equivalent per battle, net of what the fight costs in hit points.
 
     Returns 0 for a monster never fought, which is what keeps exploration
     deliberate rather than accidental.
+
+    Damage taken has been recorded per monster since the first battle, and for
+    a long time nothing read it. That was expensive. Healing is the fleet's
+    real bottleneck — a wallet may not start a fight below 45% health, and a
+    rest costs a fixed two minutes whatever it restores — so the hit points a
+    monster takes are the scarce resource, not the energy. Measured on
+    2026-08-23 across 30 wallets: troll_lvl23_2 gives 66 xp for 28 damage,
+    werewolf_lvl22_2 gives 64 xp for 127. Ranking on reward alone called those
+    two nearly equal and the fleet fought both about 150 times each; counting
+    the damage, the first is worth roughly five fights per rest and the second
+    barely one.
     """
     if memory is None or monster_id not in memory.models:
         return 0.0
@@ -297,7 +315,7 @@ def expected_value(monster_id: str, memory: "CombatMemory | None",
         for item, per_battle in model.avg_drops().items():
             bid = market.best_bid(item) or 0.0
             value += bid * per_battle
-    return value * max(model.win_rate, 0.1)
+    return value * max(model.win_rate, 0.1) - model.avg_damage * hp_gold
 
 
 def select_monster(catalog: list[str] | None, player_level: int,

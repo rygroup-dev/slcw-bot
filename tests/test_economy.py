@@ -48,6 +48,15 @@ class ScoringTests(unittest.TestCase):
         # XP still carries value, so the action is not worthless.
         self.assertGreater(battle.gold_equivalent, 0)
 
+    def test_a_measured_monster_is_charged_its_own_damage(self):
+        guessed = econ.battle_candidate("forestspider_lvl1_2", self.economy)
+        measured = econ.battle_candidate("forestspider_lvl1_2", self.economy,
+                                         hp_cost=127.4)
+        self.assertEqual(guessed.hp_cost, econ.BATTLE_HP_LOSS)
+        self.assertEqual(measured.hp_cost, 127)
+        self.assertLess(self.economy.score_action(measured, 100, 100).score,
+                        self.economy.score_action(guessed, 100, 100).score)
+
     def test_free_actions_outrank_everything(self):
         free = econ.free_candidate("finishActivity", {}, "reward waiting")
         production = self.economy.score_action(econ.production_candidate(), 100, 100)

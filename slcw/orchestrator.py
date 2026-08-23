@@ -547,6 +547,7 @@ class Orchestrator:
                         drop_values=drop_values,
                         expected_drops=expected_drops,
                         market_stale=stale,
+                        hp_cost=learned.avg_damage if has_learned else None,
                     ))
 
                 # Passive and location-independent, unlike battle — offered

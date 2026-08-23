@@ -267,6 +267,45 @@ class MeasuredValueTests(unittest.TestCase):
         self.assertGreater(expected_value("bigfrog_lvl1_1", self.memory),
                            expected_value("forestspider_lvl1_2", self.memory))
 
+    def test_damage_taken_is_charged_against_the_reward(self):
+        """The measured case, in its measured shape: two monsters that pay
+        almost the same xp, where one of them costs four times the hit points.
+        Ranking on reward alone called those two equal for weeks."""
+        from slcw.combat import expected_value
+        for _ in range(5):
+            self._fight("bigfrog_lvl1_1", xp=66, damage=28)
+            self._fight("forestspider_lvl1_2", xp=64, damage=127)
+        self.assertGreater(expected_value("bigfrog_lvl1_1", self.memory),
+                           expected_value("forestspider_lvl1_2", self.memory))
+
+    def test_a_cheap_fight_can_beat_a_richer_one(self):
+        """Not merely a tie-breaker: enough damage outweighs a real edge in xp."""
+        from slcw.combat import expected_value
+        for _ in range(5):
+            self._fight("bigfrog_lvl1_1", xp=50, damage=10)
+            self._fight("forestspider_lvl1_2", xp=60, damage=200)
+        self.assertGreater(expected_value("bigfrog_lvl1_1", self.memory),
+                           expected_value("forestspider_lvl1_2", self.memory))
+
+    def test_free_damage_is_still_ranked_on_reward(self):
+        from slcw.combat import expected_value
+        for _ in range(5):
+            self._fight("bigfrog_lvl1_1", xp=10, damage=0)
+            self._fight("forestspider_lvl1_2", xp=90, damage=0)
+        self.assertGreater(expected_value("forestspider_lvl1_2", self.memory),
+                           expected_value("bigfrog_lvl1_1", self.memory))
+
+    def test_selection_avoids_the_monster_that_costs_the_most_health(self):
+        rng = random.Random(4)
+        for _ in range(6):
+            self._fight("bigfrog_lvl1_1", xp=60, damage=12)
+            self._fight("forestspider_lvl1_2", xp=62, damage=120)
+        picks = [select_monster(["bigfrog_lvl1_1", "forestspider_lvl1_2"],
+                                player_level=1, health_ratio=1.0,
+                                memory=self.memory, rng=rng) for _ in range(30)]
+        self.assertGreater(picks.count("bigfrog_lvl1_1"),
+                           picks.count("forestspider_lvl1_2"))
+
     def test_selection_prefers_the_monster_that_actually_paid(self):
         rng = random.Random(4)
         for _ in range(6):

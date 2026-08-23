@@ -151,8 +151,16 @@ def production_candidate(cycles: int = 1) -> ActionScore:
 
 
 def battle_candidate(monster_id: str, economy: Economy, drop_values: dict | None = None,
-                     expected_drops: dict | None = None, market_stale: bool = False) -> ActionScore:
-    """Value a battle as XP plus the market value of its expected drops."""
+                     expected_drops: dict | None = None, market_stale: bool = False,
+                     hp_cost: float | None = None) -> ActionScore:
+    """Value a battle as XP plus the market value of its expected drops.
+
+    `hp_cost` is this monster's own measured damage when it has been fought;
+    BATTLE_HP_LOSS is only the opening guess for one that has not. Scoring
+    every monster at the same flat six hit points made the hardest fight in
+    the zone look as cheap as the easiest, which is how the fleet came to
+    spend most of its day resting.
+    """
     drops = expected_drops or {"spiderfang": 1.5}
     values = drop_values or {}
     drop_gold = sum(values.get(item, 0.0) * quantity for item, quantity in drops.items())
@@ -162,7 +170,7 @@ def battle_candidate(monster_id: str, economy: Economy, drop_values: dict | None
         params={"monsterId": monster_id},
         gold_equivalent=BATTLE_XP * economy.xp_gold + drop_gold,
         energy_cost=BATTLE_ENERGY,
-        hp_cost=BATTLE_HP_LOSS,
+        hp_cost=BATTLE_HP_LOSS if hp_cost is None else max(0, round(hp_cost)),
         duration_seconds=BATTLE_SECONDS,
         reason=(f"{BATTLE_XP} xp @ {economy.xp_gold:g}g + drops worth {drop_gold:.0f}g"
                 + (" (market data stale, drops valued at 0)" if market_stale else "")),
