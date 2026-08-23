@@ -98,9 +98,14 @@ class GuardrailTests(unittest.TestCase):
             self.assertTrue(guardrails.is_allowed(name), name)
 
     def test_unmeasured_systems_denied(self):
-        for name in ("startExpedition", "joinArenaQueue", "dispatchCaravan",
-                     "handleReferral"):
+        for name in ("startExpedition", "joinArenaQueue", "handleReferral"):
             self.assertFalse(guardrails.is_allowed(name), name)
+
+    def test_caravan_is_allowed_once_its_trade_model_was_measured(self):
+        """Priced against the live cities rather than guessed at, so the
+        allowlist lets it through. What guards it now is the level gate in the
+        orchestrator, not the guardrail."""
+        self.assertTrue(guardrails.is_allowed("dispatchCaravan"))
 
     def test_free_quest_flow_allowed(self):
         for name in ("getTaskStatus", "acceptTask", "claimTaskReward",

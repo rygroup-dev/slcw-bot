@@ -153,6 +153,40 @@ ALLOWED_CALLABLES = frozenset({
     # but it is far too large a commitment for a decision loop, hence the
     # operator gate rather than the allowlist alone.
     "createClan",
+    # Caravan trade, measured 2026-08-23. It buys a city's warehouse output
+    # with gold, hauls it to a city that lists that good as a production input,
+    # and sells it there. Both prices come from one function in the client:
+    #
+    #   base = {runic_alloy 4800, crystal_core 3700, frozen_vein 3500,
+    #           aqua_vitae 3000, living_timber 1900, aether_fragment 4000,
+    #           volt_essence 3800, runestone 5500, chronicle_page 4200,
+    #           battle_ember 4500, imperial_seal 3500}
+    #   half = warehouseCapacity / 2
+    #   unit = ceil(base * max(qty <= half ? 2 - qty/half
+    #                                      : 1 - 0.5*min((qty-half)/half, 1), 0.5))
+    #
+    # so a starved warehouse pays 2x base and a glutted one 0.5x. Selling into
+    # city_2, the trade hub, is a flat floor(0.8 * base) instead, which makes
+    # the hub the worst destination rather than the best. The destination's
+    # taxRate comes off the profit, never the principal. Capacity is
+    # floor(10 + 2*merchantGuild.talents.capacity + mount cargo) — ten units
+    # without a pass — and a dispatch costs max(2, 20 - 0.18*talents.logistics)
+    # energy, so twenty for us. The cargo is bought from the warehouse with
+    # gold and never touches the bag.
+    #
+    # Priced against the live `cities` collection the spread is not small:
+    # Ostrim -> Greyholm moves ten chronicle_page bought at 2,840 into a
+    # warehouse holding none of them, which pays 8,397 — about 55,000 gold for
+    # twenty energy. A battle returns roughly 185 gold for one energy.
+    #
+    # It is operator-only rather than allowlisted outright because the loss
+    # side is still unmeasured: cities carry a `caravanRobberyDefenseBonus`,
+    # so caravans can evidently be robbed, but no chance, no trigger and no
+    # loss appear anywhere in the client — it is resolved server-side inside
+    # finishActivity. build_candidates does not emit this, so no unattended
+    # wallet can decide to trade on its own; it is reachable only from an
+    # explicit operator run, which is how the robbery gets measured at all.
+    "dispatchCaravan",
     # Accepts or rejects a join request to the operator's own clan.
     "resolveApplication",
     # Starts the clan's one free weekly quest. In a clan of the operator's own
@@ -278,42 +312,6 @@ DENIED_CALLABLES = {
     # --- risk or loss not modelled ----------------------------------------
     "joinArenaQueue": "no reward or loss model",
     "leaveArenaQueue": "no reward or loss model",
-    # --- caravan: measured 2026-08-23, still denied on one unknown ---------
-    # The reward model is no longer a guess. `dispatchCaravan({templateId,
-    # quantity, destinationId})` buys a city's warehouse output with gold,
-    # hauls it to a city that lists that good as a production input, and sells
-    # it there. Both prices come from one function in the client bundle:
-    #
-    #   base = {runic_alloy 4800, crystal_core 3700, frozen_vein 3500,
-    #           aqua_vitae 3000, living_timber 1900, aether_fragment 4000,
-    #           volt_essence 3800, runestone 5500, chronicle_page 4200,
-    #           battle_ember 4500, imperial_seal 3500}
-    #   half = warehouseCapacity / 2
-    #   unit = ceil(base * max(qty <= half ? 2 - qty/half
-    #                                      : 1 - 0.5*min((qty-half)/half, 1), 0.5))
-    #
-    # so a starved warehouse pays 2x base and a glutted one 0.5x. Selling into
-    # city_2, the trade hub, is a flat floor(0.8 * base) instead. The
-    # destination's taxRate is taken off the profit, never the principal.
-    # Capacity is floor(10 + 2*merchantGuild.talents.capacity + mount cargo) —
-    # ten units without a pass — and the dispatch costs
-    # max(2, 20 - 0.18*talents.logistics) energy, so twenty for us.
-    #
-    # Priced against the live `cities` collection on 2026-08-23 the spread is
-    # not small: Ostrim -> Greyholm moved ten chronicle_page bought at 2,672
-    # into a warehouse holding none of them, which pays 8,397 — 57,259 gold of
-    # profit for 20 energy and 220 seconds. A battle returns about 185 gold for
-    # one energy. Draining every route at current stock would be roughly 50
-    # million gold, against a fleet that holds 2.6 million and earns 33k an hour.
-    #
-    # What is still missing is the loss side, and it is the whole reason this
-    # stays denied. Cities carry a `caravanRobberyDefenseBonus` field, so
-    # caravans can evidently be robbed, but no chance, no trigger and no loss
-    # appear anywhere in the client — it is resolved server-side inside
-    # finishActivity. Opening this on a computed profit while the only
-    # downside in the game is invisible would be exactly the guess this file
-    # exists to prevent. One measured run settles it.
-    "dispatchCaravan": "profit model measured; robbery loss still unmeasured",
     "startExpedition": "reward and cost model not measured",
     "finishExpedition": "reward and cost model not measured",
     "claimExpeditionRewards": "reward and cost model not measured",
