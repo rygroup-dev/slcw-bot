@@ -825,6 +825,19 @@ See [`.env.example`](.env.example) for the annotated full list.
 | `SLCW_XP_GOLD` | `5.0` | gold one xp point is worth. Lower favours gold, higher favours levelling |
 | `SLCW_CARAVAN_MIN_LEVEL` | `20` | level a wallet must reach before it may trade. Below it, nothing changes |
 | `SLCW_CITIES_TTL_SECONDS` | `300` | how long warehouse prices are reused before being re-read |
+
+> [!NOTE]
+> **Pacing is the biggest single lever on throughput, and the one with a cost that
+> is not measured in gold.** The shipped defaults are deliberately slow: a wallet
+> waits a log-normal median of 90 seconds after each action, which reads like
+> someone playing rather than a script. Measured on a 30-wallet fleet, dropping
+> that to 30 seconds took a wallet from 7.1 fights an hour to 23.4 and experience
+> from 431 an hour to 1,420 — a level 30 that was eight days away arrived in two.
+> Nothing about the decisions changed; the engine simply stopped waiting.
+>
+> That gain is bought with a more machine-like cadence, so the numbers are given
+> here rather than the fast values being shipped. It is a per-install judgement,
+> it lives in `.env` rather than in code, and it is reversible with a restart.
 | `SLCW_DISCARD_JUNK` | `false` | destroy drops nothing in the game can use, once the bag is full |
 | `SLCW_CLAN_ENABLED` | `true` | clan participation at all |
 | `SLCW_CLAN_DONATE_GOLD` | `false` | donate gold to the treasury (1,000 gold = 1 DKP, once a day). Off because the treasury is the leader's to distribute |
