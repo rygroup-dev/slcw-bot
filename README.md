@@ -933,6 +933,16 @@ unlock, and the engine already declines to gather until then.
 is gated by character grade, and raising grade consumes imperial seals — an
 irreversible spend the engine will not make on its own.
 
+**Sharpening is measured but still off.** The Master Forge in Elar takes a piece of
+gear and an identical twin — same template, same sharpen level — burns the twin, charges
+a flat 300 gold, and sometimes returns the first piece one level higher. Measured on
+2026-08-24: four of seven attempts landed, a t1 sword went from 16 to 21 weapon power
+and t1 armour from 4 to 5 defence. Because the sacrifice must match the target's level,
++1 costs two pieces, +2 costs four and +3 costs eight — the scarce input is fodder, not
+gold, which is the first use anyone has found for the fleet's unsellable t1 pile. It
+stays denied until the success rate is measured properly rather than guessed from seven
+tries, and until it has a policy module of its own like discarding does.
+
 **Expeditions, arena and mounts are unmapped.** The callables exist and are denied until
 their reward and cost models are measured, rather than enabled on a guess.
 

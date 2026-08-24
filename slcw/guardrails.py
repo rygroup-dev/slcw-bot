@@ -302,7 +302,23 @@ DENIED_CALLABLES = {
     "searchMountActivity": "mount system not modelled",
 
     # --- consumes materials irreversibly, no model ------------------------
-    "sharpenItem": "consumes materials, outcome not modelled",
+    # Measured live 2026-08-24 at the Master Forge of Elar (city_7), which is
+    # the only place it works and charges nothing to enter. Signature is
+    # sharpenItem({targetId, sacrificeId}) and the sacrifice must be the
+    # target's twin — same template, same sharpen level — so +1 costs two
+    # pieces, +2 costs four, +3 eight. Fee is a flat 300 gold whatever happens,
+    # and the sacrifice is destroyed either way. Seven attempts, four
+    # successes: a t1 sword went 16 to 21 weapon power and t1 armour 4 to 5
+    # defence, each for one level.
+    #
+    # This is the first thing found that the fleet's 546 unsellable t1 pieces
+    # are actually good for, and cheap enough to matter. It stays denied
+    # anyway: four successes is not a success rate, the wallets that would
+    # benefit are two days from the level 30 that unlocks t3 outright, and
+    # every attempt destroys an item for good. Reopen it with a hundred
+    # attempts behind it and a policy module of its own, the way discarding
+    # was done.
+    "sharpenItem": "measured, not yet modelled: 300 gold and a twin per attempt, ~4/7 succeeded",
     "awakenItem": "consumes materials, outcome not modelled",
     "startSoulExtraction": "consumes items irreversibly",
 
