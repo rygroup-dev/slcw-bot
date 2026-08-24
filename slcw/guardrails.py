@@ -306,19 +306,31 @@ DENIED_CALLABLES = {
     # the only place it works and charges nothing to enter. Signature is
     # sharpenItem({targetId, sacrificeId}) and the sacrifice must be the
     # target's twin — same template, same sharpen level — so +1 costs two
-    # pieces, +2 costs four, +3 eight. Fee is a flat 300 gold whatever happens,
-    # and the sacrifice is destroyed either way. Seven attempts, four
-    # successes: a t1 sword went 16 to 21 weapon power and t1 armour 4 to 5
-    # defence, each for one level.
+    # pieces, +2 costs four, +3 eight. A success answers {success, newLevel,
+    # newStats, insuranceUsed, insuranceCost: 5}: a t1 sword went 16 to 21
+    # weapon power and t1 armour 4 to 5 defence, each for one level.
+    #
+    # Two corrections to the first reading of this, both measured after it:
+    #
+    #   * The fee is not flat. A +0 target was billed 300 and a +1 target 900,
+    #     which reads as 300 * 3^level — thin, at two points, but it is not
+    #     300 forever.
+    #   * A mismatched pair is not refused cleanly, it is billed. One attempt
+    #     with a +1 target and a +0 sacrifice took 900 gold, destroyed the
+    #     sacrifice, returned HTTP 500 and left the level alone. Every one of
+    #     the seven attempts that failed had mismatched levels; all five that
+    #     were matched succeeded. So there is no measured failure rate yet —
+    #     only a measured way to waste an item, and anything automating this
+    #     has to compare both levels itself before it calls.
     #
     # This is the first thing found that the fleet's 546 unsellable t1 pieces
     # are actually good for, and cheap enough to matter. It stays denied
-    # anyway: four successes is not a success rate, the wallets that would
+    # anyway: five matched successes is not a success rate, the wallets that would
     # benefit are two days from the level 30 that unlocks t3 outright, and
     # every attempt destroys an item for good. Reopen it with a hundred
     # attempts behind it and a policy module of its own, the way discarding
     # was done.
-    "sharpenItem": "measured, not yet modelled: 300 gold and a twin per attempt, ~4/7 succeeded",
+    "sharpenItem": "measured, not yet modelled: an exact twin plus 300 * 3^level gold; a mismatched pair is billed and eaten",
     "awakenItem": "consumes materials, outcome not modelled",
     "startSoulExtraction": "consumes items irreversibly",
 
