@@ -323,6 +323,11 @@ def _ago(timestamp: int) -> str:
 
 
 def _in(timestamp: int) -> str:
+    """How long until the next wake, to one unit.
+
+    "4m 44d" read as a date to more than one operator; a wake time does not
+    need its seconds.
+    """
     if not timestamp:
         return "—"
     delta = int(timestamp - time.time())
@@ -331,11 +336,14 @@ def _in(timestamp: int) -> str:
     if delta < 60:
         return f"{delta}d"
     if delta < 3600:
-        return f"{delta // 60}m {delta % 60}d"
-    return f"{delta // 3600}j {(delta % 3600) // 60}m"
+        return f"{delta // 60}m"
+    return f"{delta // 3600}j{(delta % 3600) // 60:02d}m"
 
 
-WALLETS_PER_PAGE = 4
+# Eight fits comfortably: the per-wallet block is four lines, so a full page
+# runs about 1,500 characters against Telegram's 4,000 — and fifty wallets is
+# seven pages to thumb through rather than thirteen.
+WALLETS_PER_PAGE = 8
 
 
 def page_count(total: int, per_page: int = WALLETS_PER_PAGE) -> int:
@@ -441,30 +449,32 @@ def render_status(fleet_state: dict, page: int = 1) -> str:
                      f"{html.escape(str(status.get('nickname', '')))}")
 
         if state:
-            lines.append(f"   Lv{state.get('level', '?')} · "
-                         f"{state.get('gold', 0):,}g · 💎{state.get('diamonds', 0)}"
-                         + (f" · 📦{state['chests']}" if state.get("chests") else ""))
-            lines.append(f"   ❤️ {_bar(state.get('health', 0), state.get('max_health', 1))} "
-                         f"{state.get('health', 0)}/{state.get('max_health', 0)}")
-            lines.append(f"   ⚡ {_bar(state.get('energy', 0), state.get('max_energy', 1))} "
-                         f"{state.get('energy', 0)}/{state.get('max_energy', 0)}")
+            grade = state.get("grade")
+            extras = "".join(
+                [f" · 💎{state['diamonds']}" if state.get("diamonds") else "",
+                 f" · 📦{state['chests']}" if state.get("chests") else ""])
+            lines.append(
+                f"   Lv{state.get('level', '?')}"
+                + (f" g{grade}" if grade else "")
+                + f" · {state.get('gold', 0):,}g" + extras)
+            lines.append(
+                f"   ❤️ {state.get('health', 0)}/{state.get('max_health', 0)}"
+                f" · ⚡ {state.get('energy', 0)}/{state.get('max_energy', 0)}"
+                f" · 📍 {html.escape(str(state.get('location', '?')))}")
 
             activity = state.get("activity", "idle")
-            remaining = state.get("activity_remaining_s", 0)
-            place = html.escape(str(state.get("location", "?")))
+            remaining = int(state.get("activity_remaining_s", 0) or 0)
             if activity and activity != "idle" and remaining:
                 lines.append(f"   🎯 {html.escape(str(activity))} · "
-                             f"sisa {int(remaining) // 60}m · 📍{place}")
-            else:
-                lines.append(f"   📍 {place}")
+                             f"sisa {max(1, remaining // 60)}m")
 
         lines.append(f"   ⚙️ {html.escape(str(status.get('last_action') or '—'))} · "
-                     f"{_ago(status.get('last_run_ts', 0))} · "
-                     f"⏭ {_in(status.get('next_wake_ts', 0))}")
+                     f"{_ago(status.get('last_run_ts', 0))} → "
+                     f"{_in(status.get('next_wake_ts', 0))}")
 
         if status.get("last_error"):
             lines.append(f"   ⚠️ <code>"
-                         f"{html.escape(str(status['last_error'])[:110])}</code>")
+                         f"{html.escape(str(status['last_error'])[:90])}</code>")
         elif status.get("paused"):
             lines.append(f"   ⏸ {html.escape(str(status.get('pause_reason', '')))}")
         lines.append("")
