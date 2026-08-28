@@ -33,9 +33,21 @@ REFINED_ITEMS = frozenset(
 TAX_RATE = 0.20
 
 # Refined goods are also what the crafting bench turns into equipment, and one
-# piece of t2 gear sold back for 8,948 — ten times what an ingot fetches. So a
-# stack is only sold down to here, never emptied.
-CRAFTING_RESERVE = 10
+# piece of t2 gear sold back for 8,948 — ten times what an ingot fetches. That
+# was the reasoning for holding ten of every stack back.
+#
+# It cost more than it saved. This fleet has never crafted anything — not once
+# in its whole ledger — and the bench is out of reach anyway: the recipes want
+# ingots the bot does not make, every profession sits at level 0, and 88 of 154
+# recipes need echo_* items nobody has. Meanwhile a refining run produces two
+# units at a time, so `2 - 10` is negative and no sale is ever offered. Three
+# wallets were sitting on 1, 2 and 4 rough_leather with a standing bid of 1,000
+# a unit and 1,626 units of demand, and the fleet's entire history contains one
+# filled order.
+#
+# So the reserve is now the caller's decision and defaults to nothing. Raise
+# SLCW_CRAFTING_RESERVE the day crafting is real.
+CRAFTING_RESERVE = 0
 
 # Below this a sale is not worth the cycle it costs; the wallet has better
 # things to do with the turn.

@@ -151,6 +151,11 @@ class Config:
     # ever happened values a day of walking at thousands of gold an hour it
     # does not collect. Turn it on once refining and black-market sales appear
     # in data/profit_ledger.jsonl in numbers.
+    # Refined goods held back from the Black Market for the crafting bench.
+    # Zero because this fleet has never crafted: the reserve only ever blocked
+    # sales, since a refining run makes two units and the old floor was ten.
+    crafting_reserve: int = field(
+        default_factory=lambda: _int("SLCW_CRAFTING_RESERVE", 0))
     refining_chain_proven: bool = field(
         default_factory=lambda: _bool("SLCW_REFINING_CHAIN_PROVEN", False))
     farming_gold: bool = field(default_factory=lambda: _bool("SLCW_FARMING_GOLD", True))

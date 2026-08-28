@@ -397,7 +397,8 @@ class Orchestrator:
         # copper_ingot at 899 with 6,324 wanted, mithril_ingot at 3,300. This
         # is what makes gathering and refining worth anything.
         if not stale_market:
-            resale = bm_mod.next_sale(holdings or {}, market)
+            resale = bm_mod.next_sale(holdings or {}, market,
+                                      reserve=self.config.crafting_reserve)
             if resale is not None:
                 params = {"resourceId": resale.item, "action": "sell",
                           "quantity": resale.quantity}

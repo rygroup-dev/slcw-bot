@@ -853,6 +853,7 @@ See [`.env.example`](.env.example) for the annotated full list.
 | `SLCW_CLAN_AUTO_FOUND` | `false` | let that wallet found the clan by itself, exactly once |
 | `SLCW_CLAN_NAME` / `SLCW_CLAN_TAG` | *(unset)* | clan identity; tag is at most 4 characters and cannot be changed later |
 | `SLCW_CLAN_AUTO_JOIN` | `true` | the highest-level wallets apply up to the clan's seat count, and the leader admits this vault's wallets only |
+| `SLCW_CRAFTING_RESERVE` | `0` | refined goods held back from the Black Market for crafting. Zero: this fleet has never crafted, and the old floor of ten blocked every sale |
 | `SLCW_REFINING_CHAIN_PROVEN` | `false` | let a raw material be valued at the refined good it could become. Off until this fleet is seen to complete the chain |
 | `SLCW_FARMING_GOLD` | `true` | allow gold-mode gathering, which locks a wallet for hours |
 | `SLCW_FARMING_GOLD_HOURS` | `8` | how long a gold-mode run lasts (1-8) |

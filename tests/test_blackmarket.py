@@ -119,7 +119,7 @@ class DecisionTests(unittest.TestCase):
         top = self._top({"copper_ingot": 40})
         self.assertEqual(top.action, "executeBlackMarketOrder")
         self.assertEqual(top.params, {"resourceId": "copper_ingot",
-                                      "action": "sell", "quantity": 30})
+                                      "action": "sell", "quantity": 40})
 
     def test_the_reason_says_what_it_is_worth(self):
         self.assertIn("gold", self._top({"copper_ingot": 40}).reason)
@@ -148,7 +148,7 @@ class DecisionTests(unittest.TestCase):
                             holdings={"copper_ingot": 40})
         self.assertTrue(orch.rejections.is_parked(
             "w1", "executeBlackMarketOrder",
-            {"resourceId": "copper_ingot", "action": "sell", "quantity": 30}))
+            {"resourceId": "copper_ingot", "action": "sell", "quantity": 40}))
 
 
 class LedgerTests(unittest.TestCase):
@@ -163,3 +163,44 @@ class LedgerTests(unittest.TestCase):
         from slcw import ledger
         self.assertEqual(
             ledger._extract_summary("executeBlackMarketOrder", {"success": True}), {})
+
+
+class ReserveTests(unittest.TestCase):
+    """The reserve that stopped every sale this fleet ever nearly made.
+
+    A refining run makes two units. Held back ten "for crafting", `2 - 10` is
+    negative and no sale is offered — and the fleet has never crafted anything,
+    so the reserve protected a bench it cannot reach. Three wallets sat on 1, 2
+    and 4 rough_leather against a standing bid of 1,000 a unit.
+    """
+
+    def test_a_small_stack_is_sellable_now(self):
+        sale = blackmarket.next_sale({"rough_leather": 2}, market(rough_leather=1000))
+        self.assertIsNotNone(sale)
+        self.assertEqual(sale.quantity, 2)
+        self.assertEqual(sale.gross, 2000)
+        self.assertEqual(sale.net, 1600)
+
+    def test_a_reserve_still_works_when_one_is_asked_for(self):
+        sale = blackmarket.next_sale({"rough_leather": 12},
+                                     market(rough_leather=1000), reserve=10)
+        self.assertEqual(sale.quantity, 2)
+        self.assertIsNone(blackmarket.next_sale(
+            {"rough_leather": 2}, market(rough_leather=1000), reserve=10))
+
+    def test_a_sale_still_has_to_clear_the_floor(self):
+        """One unit of something cheap is not worth the cycle."""
+        self.assertIsNone(blackmarket.next_sale(
+            {"rough_leather": 1}, market(rough_leather=100)))
+
+    def test_the_orchestrator_uses_the_configured_reserve(self):
+        from tests.test_orchestrator import make
+        from slcw.config import Config
+        holding = make(config=Config(enabled=True, dry_run=True, crafting_reserve=10))
+        selling = make(config=Config(enabled=True, dry_run=True))
+        state = DecisionTests()._state()
+        args = dict(market=market(rough_leather=1000), holdings={"rough_leather": 4})
+        self.assertNotIn("executeBlackMarketOrder",
+                         [c.action for c in holding.build_candidates(state, **args)])
+        self.assertEqual(selling.build_candidates(state, **args)[0].action,
+                         "executeBlackMarketOrder")
