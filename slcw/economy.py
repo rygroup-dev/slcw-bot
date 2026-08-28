@@ -275,11 +275,22 @@ def farming_candidates(resource, state, market, config) -> list[ActionScore]:
     bid = (market.best_bid(resource.item_id) or 0.0) if market is not None else 0.0
     via_refining = refining.raw_material_value(
         resource.item_id, market, getattr(state, "grade", 7))
-    bid = max(bid, via_refining)
+    # The refining route is only counted when the operator has seen the fleet
+    # actually walk it. Ours has not: 157 finished farming runs have paid
+    # 11,772 gold between them — about 75 a run — and in the whole ledger there
+    # is exactly one filled black-market order. Meanwhile the projection reads
+    # five to six thousand gold an hour, which is what sent twenty stuck
+    # wallets on a thirteen-minute walk to Hunters Path to gather something
+    # they have never once refined or sold. Gathering is four steps from gold
+    # (gather, reach a workshop, refine, fill an order) and pricing it as if it
+    # were one is how a bot spends its day earning nothing.
+    if config.refining_chain_proven:
+        bid = max(bid, via_refining)
 
     unpriced = bid <= 0
     tier_note = f"T{resource.tier} {resource.item_id}"
-    value_note = " (via refining)" if via_refining > 0 and via_refining >= bid else ""
+    value_note = (" (via refining)" if config.refining_chain_proven
+                  and via_refining > 0 and via_refining >= bid else "")
 
     candidates = []
 

@@ -405,7 +405,13 @@ class ChainValuationTests(unittest.TestCase):
         self.assertEqual(refining.raw_material_value("copper_ore", None), 0.0)
 
     def test_gathering_becomes_viable_once_the_chain_is_priced(self):
-        """The bug this fixes: an 11,000-gold wallet still refused to gather."""
+        """The bug this fixes: an 11,000-gold wallet still refused to gather.
+
+        Behind SLCW_REFINING_CHAIN_PROVEN now: the value is real arithmetic,
+        but it is four steps away, and this fleet has never walked them —
+        157 farming runs paid 11,772 gold and one black-market order was ever
+        filled. The switch is what says the chain has been seen to work.
+        """
         from slcw.config import Config
         from slcw.model import parse_player
         from slcw.orchestrator import _GoldBudget
@@ -418,8 +424,13 @@ class ChainValuationTests(unittest.TestCase):
         resource = farm_mod.resources_at("farm_2")[0]          # copper_ore
         budget = _GoldBudget(state, 10500)
 
-        blind = econ.farming_candidates(resource, budget, build_snapshot([]), Config())
-        priced = econ.farming_candidates(resource, budget, bids(copper_ingot=888), Config())
+        proven = Config(refining_chain_proven=True)
+        blind = econ.farming_candidates(resource, budget, build_snapshot([]), proven)
+        priced = econ.farming_candidates(resource, budget, bids(copper_ingot=888), proven)
+        unproven = econ.farming_candidates(
+            resource, budget, bids(copper_ingot=888), Config())
+        self.assertTrue(all(c.gold_equivalent == 0 for c in unproven),
+                        "an unproven chain must not price the raw material")
 
         self.assertTrue(all(c.gold_equivalent == 0 for c in blind))
         self.assertTrue(any(c.gold_equivalent > 0 for c in priced))

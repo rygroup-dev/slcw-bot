@@ -145,6 +145,14 @@ class Config:
     # Gold-mode farming runs 1-8 hours and spends no energy. It also locks the
     # wallet for that whole time — no levelling, no chests, no task claims — and
     # the gold-per-hour score cannot see that cost, so it is switchable.
+    # Whether a raw material may be valued at the refined good it could become.
+    # Off until this fleet has been seen to complete the chain: gathering is
+    # four steps from gold, and counting the fourth before the first three have
+    # ever happened values a day of walking at thousands of gold an hour it
+    # does not collect. Turn it on once refining and black-market sales appear
+    # in data/profit_ledger.jsonl in numbers.
+    refining_chain_proven: bool = field(
+        default_factory=lambda: _bool("SLCW_REFINING_CHAIN_PROVEN", False))
     farming_gold: bool = field(default_factory=lambda: _bool("SLCW_FARMING_GOLD", True))
     farming_gold_hours: int = field(default_factory=lambda: _int("SLCW_FARMING_GOLD_HOURS", 8))
     # Keep this much gold in reserve; gold-funded actions may not dip below it.
