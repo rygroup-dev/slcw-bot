@@ -321,7 +321,9 @@ class Orchestrator:
 
             sale = inv_mod.next_sale(
                 inventory, state.equipment, state.grade,
-                parked=self._unsellable(wallet_id, inventory))
+                parked=self._unsellable(wallet_id, inventory),
+                needs_gold=self._short_of_the_ascent(state, holdings, cities,
+                                                     wallet_id))
             if sale is not None:
                 params = {"instanceId": sale.instance_id,
                           "templateId": sale.template_id}
@@ -653,6 +655,22 @@ class Orchestrator:
             return 1
         affordable = int(state.energy) // int(target.energy_cost)
         return max(1, min(affordable, MAX_PROJECTED_REPEATS))
+
+    def _short_of_the_ascent(self, state, holdings, cities, wallet_id=None) -> bool:
+        """At the ceiling and unable to pay for the way off it.
+
+        The one state where a wallet has nothing to gain by waiting: experience
+        is discarded, the level cannot rise, and the seals that would lift the
+        cap cost more gold than it holds.
+        """
+        if not leveling.at_grade_cap(state.level, state.grade):
+            return False
+        if evo_mod.next_grade(state.grade) is None:
+            return False
+        cost = evo_mod.ascent_cost(
+            state.grade, (holdings or {}).get(evo_mod.SEAL_ITEM, 0),
+            (cities or {}).get(evo_mod.CITADEL))
+        return self.spendable_gold(state, wallet_id) < cost
 
     def _economy_for(self, state):
         """The scorer this wallet should be using right now.

@@ -185,7 +185,7 @@ class SaleAction:
 
 
 def next_sale(inventory: Inventory, equipment: dict, grade: int | None = None,
-              parked: set | None = None) -> SaleAction | None:
+              parked: set | None = None, needs_gold: bool = False) -> SaleAction | None:
     """Best piece of gear to sell back, or None to keep everything.
 
     Measured on 2026-08-22: one plate_greaves_t2 paid 8,948 gold, tax 0, with
@@ -198,6 +198,13 @@ def next_sale(inventory: Inventory, equipment: dict, grade: int | None = None,
     has. Spare gear at or below the grade is only sold once the bag is nearly
     full, because until then keeping it costs nothing and it might yet be worn.
     Whatever `next_equip` would put on is never offered.
+
+    `needs_gold` lifts that second condition. A wallet at its grade ceiling
+    with no way to pay for the ascent is not "keeping it costs nothing": every
+    hour it holds a spare it cannot wear is an hour it stays at the ceiling
+    discarding experience. Twenty wallets sat like that for a day — 4,334
+    actions, zero gold — while the only two things that had ever paid them were
+    hunt-task rewards and exactly this sale.
     """
     parked = parked or set()
     keep = next_equip(inventory, equipment, grade)
@@ -213,7 +220,7 @@ def next_sale(inventory: Inventory, equipment: dict, grade: int | None = None,
         if piece.template_id in parked:
             continue
         tier = tier_of(piece.template_id)
-        if tier <= ceiling and not inventory.is_nearly_full:
+        if tier <= ceiling and not (inventory.is_nearly_full or needs_gold):
             continue
         if best is None or tier > best.tier:
             best = SaleAction(piece.instance_id, piece.template_id, tier)

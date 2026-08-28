@@ -553,3 +553,31 @@ class SharedShopStockTests(unittest.TestCase):
             self._state(), inventory=_inv(("plate_greaves_t2", "other")),
             include_travel=False, wallet_id="wallet-02")]
         self.assertIn("sellEquipmentItem", actions)
+
+
+class SaleWhenStuckTests(unittest.TestCase):
+    """Spare gear is worth keeping — until keeping it is what keeps you stuck."""
+
+    def _inventory(self, used=20):
+        slots = []
+        for index in range(used):
+            slots.append({"slotIndex": index, "templateId": "plate_helmet_t1",
+                          "quantity": 1, "instanceId": f"inst{index}"})
+        return inv.parse_inventory({"slots": slots, "maxSlots": 40})
+
+    def test_a_half_empty_bag_keeps_its_spares(self):
+        inventory = self._inventory()
+        self.assertFalse(inventory.is_nearly_full)
+        self.assertIsNone(inv.next_sale(inventory, {}, grade=1))
+
+    def test_a_wallet_that_cannot_pay_for_its_ascent_sells_them(self):
+        inventory = self._inventory()
+        sale = inv.next_sale(inventory, {}, grade=1, needs_gold=True)
+        self.assertIsNotNone(sale)
+        self.assertEqual(sale.template_id, "plate_helmet_t1")
+
+    def test_it_still_never_sells_what_it_would_wear(self):
+        inventory = self._inventory()
+        keep = inv.next_equip(inventory, {}, 1)
+        sale = inv.next_sale(inventory, {}, grade=1, needs_gold=True)
+        self.assertNotEqual(sale.instance_id, keep.instance_id)
