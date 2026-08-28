@@ -607,6 +607,13 @@ Whether anything else grants clan XP is not established: Asgard reached level 12
 having completed a single quest, so there is a second source this fleet has not
 measured. Donations are the obvious candidate and stay off by default anyway.
 
+**Founding one from the command line.** `slcwctl clan-setup <wallet> "<name>" "<TAG>"`
+founds the clan and, unlike `clan-create`, adopts it: auto-join reads the clan id
+out of `data/clan_registry.json`, so a clan founded without writing that file is
+one the daemon never joins. After it, and a service restart, nothing else is run
+by hand — outside wallets apply as seats allow, the leader admits its own, and
+the weekly quest starts itself.
+
 Until the level is bought, the seats have to be rationed. The runner ranks every
 wallet by level and only the top `maxMembers` of them apply, so a thirty-wallet
 fleet does not queue twenty-nine applications against nine free seats. The

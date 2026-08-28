@@ -22,6 +22,10 @@ the weekly quest are decisions about a clan you own, not moves in a game loop.
                                    Apply wallets to a clan (all others by default)
   slcwctl clan-accept <clanId>     Accept every pending application (leader only)
   slcwctl clan-quest <id> <clanId> Start the clan's free weekly quest
+  slcwctl clan-setup <id> <name> <TAG>
+                                   Found a clan and hand it to the daemon: the
+                                   fleet then applies, is admitted, and runs the
+                                   weekly quest without further commands
 """
 from __future__ import annotations
 
@@ -380,6 +384,59 @@ def cmd_clan_accept(clan_id: str) -> int:
     sys.exit(f"error: no wallet leads clan {clan_id!r}")
 
 
+def cmd_clan_setup(wallet_id: str, name: str, tag: str) -> int:
+    """Found a clan and adopt it, so the running fleet does the rest itself.
+
+    clan-create alone leaves the daemon none the wiser: auto-join reads the
+    clan id out of data/clan_registry.json, and a clan founded from the command
+    line never appeared there. So this writes the registry too, and from that
+    point the fleet needs no further commands — outside wallets apply as seats
+    allow, the leader admits its own, and the weekly quest starts itself.
+    """
+    from slcw import clan as clan_mod
+    config = config_mod.load()
+    vault = Vault()
+    unlock(vault)
+
+    registry = clan_mod.ClanRegistry()
+    if registry.founded:
+        sys.exit(f"error: this install already runs clan {registry.clan_id}. "
+                 f"Delete data/clan_registry.json first if that is really over.")
+
+    wallet, transport, session = _clan_session(vault, config, wallet_id)
+    try:
+        api = GameApi(transport)
+        state = api.get_player(session)
+        if (state.raw or {}).get("clanId"):
+            sys.exit(f"error: {wallet_id} is already in a clan")
+        if state.gold < clan_mod.CREATE_CLAN_GOLD:
+            sys.exit(f"error: {wallet_id} has {state.gold:,} gold, needs "
+                     f"{clan_mod.CREATE_CLAN_GOLD:,}")
+        others = [w["id"] for w in vault.wallets() if w["id"] != wallet_id]
+        print(f"Founding {name!r} [{tag}] from {wallet_id} ({state.gold:,} gold).")
+        print(f"  cost      {clan_mod.CREATE_CLAN_GOLD:,} gold, spent once and not refundable")
+        print(f"  seats     a new clan holds 10; {len(others)} other wallet(s) will queue")
+        print(f"  after     the daemon applies, admits, and runs the weekly quest itself")
+        if input("  type the clan name to confirm: ").strip() != name:
+            sys.exit("aborted")
+
+        api.create_clan(session, name, tag)
+        after = api.get_player(session)
+        clan_id = str((after.raw or {}).get("clanId") or "")
+        if not clan_id:
+            sys.exit("error: the clan was created but no clanId came back — "
+                     "check slcwctl clan-status before running this again")
+        registry.record_clan(clan_id, wallet_id)
+        print(f"\nclan {name!r} [{tag}] founded: {clan_id}")
+        print(f"gold {state.gold:,} -> {after.gold:,}")
+        print(f"registry written to {registry.path}")
+        print("\nNothing else to run. Restart the service so it reads the registry:")
+        print("    systemctl restart slcw-fleet")
+        return 0
+    finally:
+        transport.close()
+
+
 def cmd_clan_quest(wallet_id: str, clan_id: str) -> int:
     config = config_mod.load()
     vault = Vault()
@@ -442,6 +499,10 @@ def main(argv: list[str]) -> int:
         if not rest:
             sys.exit("usage: slcwctl clan-accept <clanId>")
         return cmd_clan_accept(rest[0])
+    if command == "clan-setup":
+        if len(rest) < 3:
+            sys.exit('usage: slcwctl clan-setup <wallet-id> "<name>" "<TAG>"')
+        return cmd_clan_setup(rest[0], rest[1], rest[2])
     if command == "clan-quest":
         if len(rest) < 2:
             sys.exit("usage: slcwctl clan-quest <wallet-id> <clanId>")

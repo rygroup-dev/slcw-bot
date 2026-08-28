@@ -1,6 +1,7 @@
 import math
 import datetime as _dt
 import unittest
+from pathlib import Path
 
 from slcw import clan
 
@@ -1088,3 +1089,41 @@ class QuestFarmingTests(unittest.TestCase):
     def test_the_errand_stops_with_the_clan_feature(self):
         self.assertIsNone(self._errand(
             orch=self._orch(config=self._config(clan_enabled=False))))
+
+
+class ClanSetupCommandTests(unittest.TestCase):
+    """The one command a new operator runs, and what it must leave behind.
+
+    clan-create founds a clan and stops there, which left the daemon unable to
+    find it: auto-join reads the id out of the registry file, and nothing had
+    written one. These pin the difference.
+    """
+
+    def test_the_registry_is_what_auto_join_reads(self):
+        import tempfile
+        from pathlib import Path
+        path = Path(tempfile.mkdtemp()) / "clan_registry.json"
+        registry = clan.ClanRegistry(path=path)
+        self.assertFalse(registry.founded)
+        registry.record_clan("newclan123", "wallet-07")
+        self.assertTrue(clan.ClanRegistry(path=path).founded)
+        self.assertEqual(clan.ClanRegistry(path=path).clan_id, "newclan123")
+        self.assertEqual(clan.ClanRegistry(path=path).data["founder_wallet"], "wallet-07")
+
+    def test_a_second_clan_never_replaces_the_first(self):
+        """Founding twice is the expensive mistake this guards against."""
+        import tempfile
+        from pathlib import Path
+        path = Path(tempfile.mkdtemp()) / "clan_registry.json"
+        registry = clan.ClanRegistry(path=path)
+        registry.record_clan("first", "wallet-01")
+        registry.record_clan("second", "wallet-02")
+        self.assertEqual(registry.clan_id, "first")
+
+    def test_the_command_is_wired_up(self):
+        source = Path("slcwctl").read_text()
+        self.assertIn('if command == "clan-setup":', source)
+        self.assertIn("def cmd_clan_setup(", source)
+        # It must adopt the clan, or the daemon carries on as if none exists.
+        setup = source.split("def cmd_clan_setup(")[1].split("\ndef ")[0]
+        self.assertIn("registry.record_clan(", setup)
