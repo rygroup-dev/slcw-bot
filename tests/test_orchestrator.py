@@ -837,6 +837,25 @@ class GradeCeilingTests(unittest.TestCase):
             wallet_id="w")[0]
         self.assertEqual(top.action, "startTaskBattle")
 
+    def test_a_fight_that_loses_money_is_not_forced_on_the_wallet(self):
+        """The chain returns its answer ahead of the ranking's own filter, so
+        the losing case has to be caught there or not at all."""
+        from slcw.tasks import Task, TaskStatus
+        orchestrator = make()
+        # A ruinous monster, at the ceiling, so neither fight can pay.
+        orchestrator.combat.record_battle(
+            "werewolf_lvl22_2", {"winner": "player", "xp": 60},
+            turns=8, damage_taken=200)
+        task = Task(monster_id="werewolf_lvl22_2", kills_progress=1, kills_required=14,
+                    gold_reward=100, status="active")
+        status = TaskStatus(player_level=15, completed_count=1,
+                            has_active_task=True, task=task)
+        state = self.capped()
+        self.assertIsNone(orchestrator._fight_choice(state, None, task))
+        actions = [c.action for c in orchestrator.build_candidates(
+            state, build_snapshot([]), {}, task_status=status, wallet_id="w")]
+        self.assertNotIn("startTaskBattle", actions)
+
     def test_below_the_ceiling_nothing_changes(self):
         orchestrator = make()
         economy = orchestrator._economy_for(self.below_cap())

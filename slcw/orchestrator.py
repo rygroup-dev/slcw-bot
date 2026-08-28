@@ -464,7 +464,9 @@ class Orchestrator:
                 # fleet's day spent recovering. So the task kill is priced
                 # against the fight the wallet would otherwise pick, and the
                 # cheaper one goes.
-                return [self._fight_choice(state, market, task_status.task)]
+                fight = self._fight_choice(state, market, task_status.task)
+                if fight is not None:
+                    return [fight]
             if in_borderlands and task_status.can_accept:
                 return [econ.free_candidate(
                     "acceptTask", {},
@@ -655,7 +657,10 @@ class Orchestrator:
         return self.economy
 
     def _fight_choice(self, state, market, task):
-        """The task's kill or an ordinary one, whichever is cheaper per hour.
+        """The task's kill or an ordinary one, whichever pays better per hour.
+
+        None when neither pays at all, so the caller can fall through to
+        everything else rather than fighting at a loss.
 
         Both are priced the same way and from the same record: the monster's
         own measured experience, drops and — the part that matters here —
@@ -669,13 +674,22 @@ class Orchestrator:
         way to collect, and letting those compete here is what once sent a
         wallet on a twenty-minute walk to a farm it could not sell from.
         """
-        chain = self._task_battle_candidate(state, market, task)
+        economy = self._economy_for(state)
+        fights = [self._task_battle_candidate(state, market, task)]
         alternative = self._plain_battle_candidate(state, market)
-        if alternative is None:
-            return chain
-        rank = [self._economy_for(state).score_action(c, state.energy, state.max_energy)
-                for c in (chain, alternative)]
-        return max(rank, key=lambda c: c.score)
+        if alternative is not None:
+            fights.append(alternative)
+        scored = [economy.score_action(c, state.energy, state.max_energy)
+                  for c in fights]
+        best = max(scored, key=lambda c: c.score)
+        # A fight that costs more than it returns is not the chain's due. This
+        # branch returns its answer straight to the caller, ahead of the
+        # ranking and its "never pay more than an action returns" filter, so
+        # the check has to happen here or it does not happen at all: at the
+        # grade ceiling, where experience is discarded, twenty wallets sat
+        # fighting at minus seven thousand gold an hour rather than falling
+        # through to the things that actually pay.
+        return best if best.score > 0 else None
 
     def _monster_pricing(self, monster_id: str, market):
         """Everything the scorer needs about one monster: xp, drops, damage."""
