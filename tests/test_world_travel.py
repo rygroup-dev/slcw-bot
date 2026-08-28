@@ -342,6 +342,44 @@ class HuntTaskHomecomingTests(unittest.TestCase):
     def test_a_wallet_already_in_place_just_fights(self):
         self.assertEqual(self._top("farm_3").action, "startTaskBattle")
 
+    def test_a_task_not_worth_fighting_is_not_worth_walking_back_for(self):
+        """Otherwise the wallet paces: the ranking sends it out to earn, and
+        this branch sends it straight back at infinite score."""
+        from slcw.tasks import Task, TaskStatus
+        from tests.test_orchestrator import make
+        orchestrator = make()
+        orchestrator.combat.record_battle(
+            "werewolf_lvl22_2", {"winner": "player", "xp": 40},
+            turns=9, damage_taken=220)
+        task = Task(monster_id="werewolf_lvl22_2", kills_progress=1,
+                    kills_required=14, gold_reward=100, status="active")
+        status = TaskStatus(player_level=15, completed_count=1,
+                            has_active_task=True, task=task)
+        # At the grade ceiling, so the experience cannot rescue the fight.
+        # Rewards claimed up to the cap, or free value would answer instead and
+        # the test would pass without touching the branch it names.
+        state = self._state("city_17", grade=1, level=15,
+                            claimedInitialRewardsV2=list(range(1, 16)))
+        candidates = orchestrator.build_candidates(
+            state, market=self._market(), holdings={}, task_status=status,
+            include_travel=False, wallet_id="w1")
+        homeward = [c for c in candidates
+                    if c.action == "startTravel" and "hunt task" in c.reason]
+        self.assertEqual(homeward, [])
+
+        # Control: the same wallet, a task worth taking, and it walks.
+        orchestrator.combat.record_battle(
+            "bigfrog_lvl13_2", {"winner": "player", "xp": 40},
+            turns=3, damage_taken=8)
+        cheap = Task(monster_id="bigfrog_lvl13_2", kills_progress=1,
+                     kills_required=14, gold_reward=2500, status="active")
+        walks = orchestrator.build_candidates(
+            state, market=self._market(), holdings={},
+            task_status=TaskStatus(player_level=15, completed_count=1,
+                                   has_active_task=True, task=cheap),
+            include_travel=False, wallet_id="w1")
+        self.assertIn("hunt task", walks[0].reason)
+
     def test_no_task_means_no_errand(self):
         from tests.test_orchestrator import make
         cands = make().build_candidates(

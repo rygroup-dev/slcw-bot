@@ -484,8 +484,23 @@ class Orchestrator:
             # the Greyholm altar re-picks from scratch, and on 2026-08-22 the
             # winner was a twenty-minute walk to Crystal Cave, scored at 24,084
             # gold an hour it could never have realised.
-            if not in_borderlands and (task_status.can_fight
-                                       or task_status.can_accept):
+            # Going home is only free value if the chain is going to be
+            # fought when it gets there. A wallet at its grade ceiling with a
+            # task on an expensive monster found the gap the hard way: the
+            # fight scored below zero so it fell through to farming, walked to
+            # Hunters Path, and was sent straight back by this branch at
+            # infinite score — twenty wallets pacing between two locations for
+            # forty minutes and earning nothing at all. An unaccepted task is
+            # still worth the walk, because accepting is free and its monster
+            # is not known until it is taken.
+            homecoming = task_status.can_accept
+            if not homecoming and task_status.can_fight and task_status.task is not None:
+                priced = self._economy_for(state).score_action(
+                    self._task_battle_candidate(state, market, task_status.task),
+                    state.energy, state.max_energy)
+                homecoming = priced.score > 0
+
+            if not in_borderlands and homecoming:
                 home = world.nearest(state.location_id, sorted(BATTLE_LOCATIONS))
                 if home and home != state.location_id:
                     params = {"destinationId": home}
