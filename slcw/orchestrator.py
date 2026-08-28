@@ -506,7 +506,7 @@ class Orchestrator:
             candidates.append(econ.relax_candidate(state))
 
         if not self.config.enabled:
-            return econ.rank([self.economy.score_action(c, state.energy, state.max_energy)
+            return econ.rank([self._economy_for(state).score_action(c, state.energy, state.max_energy)
                               for c in candidates])
 
         if state.location_id in PRODUCTION_LOCATIONS and state.energy >= econ.PRODUCTION_ENERGY:
@@ -569,7 +569,7 @@ class Orchestrator:
                 if (state.location_id in BATTLE_LOCATIONS
                         and state.health_ratio >= BATTLE_MIN_HEALTH_RATIO):
                     candidates.append(econ.battle_candidate(
-                        monster, self.economy,
+                        monster, self._economy_for(state),
                         drop_values=drop_values,
                         expected_drops=expected_drops,
                         market_stale=stale,
@@ -584,7 +584,7 @@ class Orchestrator:
                 # rather than a hardcoded single monster.
                 xp_estimate = learned.avg_xp if has_learned else econ.BATTLE_XP
                 hunt = econ.hunting_candidate(
-                    monster, monster_level(monster), self.economy,
+                    monster, monster_level(monster), self._economy_for(state),
                     xp_estimate, state.energy, state.gold,
                     drop_values=drop_values,
                     expected_drops=expected_drops,
@@ -606,7 +606,7 @@ class Orchestrator:
         if not candidates and state.health < state.max_health:
             candidates.append(econ.relax_candidate(state))
 
-        scored = [self.economy.score_action(c, state.energy, state.max_energy)
+        scored = [self._economy_for(state).score_action(c, state.energy, state.max_energy)
                   for c in candidates]
 
         # Never pay more than an action returns. Rest is exempt: when health is
@@ -637,6 +637,23 @@ class Orchestrator:
         affordable = int(state.energy) // int(target.energy_cost)
         return max(1, min(affordable, MAX_PROJECTED_REPEATS))
 
+    def _economy_for(self, state):
+        """The scorer this wallet should be using right now.
+
+        Experience is worth `xp_gold` only while the wallet can still spend it.
+        At the grade ceiling every point earned is discarded by the server, so
+        the same fight that looked like 330 gold an hour is worth its drops and
+        nothing else — and the wallet should be doing whatever actually pays.
+        Found live on 2026-08-28: twenty level 15 wallets sat at the grade 1
+        ceiling resting and hunting for experience that could not land, while
+        the 23,031 gold their ascent needed went unearned.
+        """
+        if leveling.at_grade_cap(state.level, state.grade):
+            return econ.Economy(xp_gold=0.0,
+                                energy_gold=self.economy.energy_gold,
+                                hp_gold=self.economy.hp_gold)
+        return self.economy
+
     def _fight_choice(self, state, market, task):
         """The task's kill or an ordinary one, whichever is cheaper per hour.
 
@@ -656,7 +673,7 @@ class Orchestrator:
         alternative = self._plain_battle_candidate(state, market)
         if alternative is None:
             return chain
-        rank = [self.economy.score_action(c, state.energy, state.max_energy)
+        rank = [self._economy_for(state).score_action(c, state.energy, state.max_energy)
                 for c in (chain, alternative)]
         return max(rank, key=lambda c: c.score)
 
@@ -683,7 +700,7 @@ class Orchestrator:
     def _task_battle_candidate(self, state, market, task):
         pricing = self._monster_pricing(task.monster_id, market)
         candidate = econ.task_battle_candidate(
-            task.monster_id, self.economy,
+            task.monster_id, self._economy_for(state),
             xp_estimate=pricing.pop("xp"),
             gold_per_kill=task.gold_per_kill,
             **pricing)
@@ -707,7 +724,7 @@ class Orchestrator:
             return None
         pricing = self._monster_pricing(monster, market)
         return econ.battle_candidate(
-            monster, self.economy, xp_estimate=pricing.pop("xp"), **pricing)
+            monster, self._economy_for(state), xp_estimate=pricing.pop("xp"), **pricing)
 
     def _caravan_candidate(self, state, cities, holdings=None, wallet_id=None):
         """Buy a load where it is cheap and sell it where it is short.

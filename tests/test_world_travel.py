@@ -184,8 +184,11 @@ class StabilityTests(unittest.TestCase):
     """Repeat-aware travel must not turn into pacing between two locations."""
 
     def _state(self, location, energy=85, gold=0, health=130):
+        # Grade 2, so the wallet is below its ceiling: at the ceiling every
+        # point of experience is discarded by the server and fighting is priced
+        # on drops alone, which is a different question from this one.
         return parse_player({
-            "level": 15, "grade": 1, "xp": 0, "energy": energy, "maxEnergy": 100,
+            "level": 15, "grade": 2, "xp": 0, "energy": energy, "maxEnergy": 100,
             "balance": gold, "currentHealth": health, "currentMana": 130,
             "currentLocationId": location, "attributePoints": 0,
             "attributes": {"vitality": 3, "wisdom": 3},

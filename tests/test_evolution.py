@@ -140,8 +140,11 @@ class DecisionTests(unittest.TestCase):
         self.assertNotEqual(top.action, "startTravel")
 
     def test_a_wallet_that_cannot_afford_the_seals_does_not_try(self):
+        """And at the ceiling with no gold there may be nothing to do at all —
+        experience is discarded there, so an ordinary fight scores nothing
+        either."""
         top = self._top(holdings={}, currentLocationId="city_17", balance=100)
-        self.assertNotEqual(top.action, "purchaseImperialSeal")
+        self.assertNotEqual(getattr(top, "action", None), "purchaseImperialSeal")
 
     def test_the_top_grade_is_left_alone(self):
         top = self._top(holdings={"imperial_seal": 99_999},

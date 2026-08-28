@@ -109,9 +109,12 @@ class FakeApi:
 
 def state_of(**overrides):
     doc = {
-        # Level 15 at grade 1 sits on the grade cap, so no free level-up is
-        # available and each test exercises the behaviour it names.
-        "level": 15, "xp": 1398, "balance": 0, "energy": 85, "maxEnergy": 100,
+        # Level 15 with 1,398 of the 2,000 xp the next level wants: no free
+        # level-up is available, so each test exercises the behaviour it names.
+        # Grade 2 deliberately — grade 1 would put this fixture on its grade
+        # ceiling, where experience is worth nothing and every score that
+        # mentions xp changes meaning.
+        "level": 15, "grade": 2, "xp": 1398, "balance": 0, "energy": 85, "maxEnergy": 100,
         "currentHealth": 130, "currentMana": 130, "attributePoints": 0,
         "currentLocationId": "city_2",
         "attributes": {"wisdom": 3, "vitality": 3},
@@ -800,6 +803,44 @@ class ExecutorCoverageTests(unittest.TestCase):
         self.assertIn("createClan", chosen)
         self.assertIn("generateClanQuest", chosen)
         self.assertIn("createClan", self._executors())
+
+
+class GradeCeilingTests(unittest.TestCase):
+    """Experience is only worth something while the wallet can still spend it."""
+
+    def capped(self, **overrides):
+        doc = {"level": 15, "grade": 1, "currentLocationId": "farm_3",
+               "energy": 85, "balance": 20_000}
+        doc.update(overrides)
+        return state_of(**doc)
+
+    def below_cap(self, **overrides):
+        return self.capped(grade=2, **overrides)
+
+    def test_a_fight_at_the_ceiling_is_worth_only_its_drops(self):
+        orchestrator = make()
+        priced = orchestrator._plain_battle_candidate(self.capped(), None)
+        free = orchestrator._plain_battle_candidate(self.below_cap(), None)
+        self.assertEqual(priced.gold_equivalent, 0)
+        self.assertGreater(free.gold_equivalent, 0)
+
+    def test_the_hunt_task_wins_at_the_ceiling_because_it_pays_gold(self):
+        """The chain's reward is gold, which lands whatever the level cap says."""
+        from slcw.tasks import Task, TaskStatus
+        orchestrator = make()
+        task = Task(monster_id="bigfrog_lvl13_2", kills_progress=2, kills_required=14,
+                    gold_reward=2500, status="active")
+        status = TaskStatus(player_level=15, completed_count=3,
+                            has_active_task=True, task=task)
+        top = orchestrator.build_candidates(
+            self.capped(), build_snapshot([]), {}, task_status=status,
+            wallet_id="w")[0]
+        self.assertEqual(top.action, "startTaskBattle")
+
+    def test_below_the_ceiling_nothing_changes(self):
+        orchestrator = make()
+        economy = orchestrator._economy_for(self.below_cap())
+        self.assertEqual(economy.xp_gold, orchestrator.config.xp_gold)
 
 
 class CaravanBranchTests(unittest.TestCase):
