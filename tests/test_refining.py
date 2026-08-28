@@ -214,6 +214,9 @@ class OrchestratorTests(unittest.TestCase):
                "balance": 5000, "currentHealth": 130, "currentMana": 130,
                "currentLocationId": "city_1", "attributePoints": 0,
                "attributes": {"vitality": 3, "wisdom": 3},
+               # Entry paid: the workshop is behind the city gate, and buying
+               # that door is its own decision — see CityGateTests below.
+               "cityAccessPasses": {"1": 4_102_444_800},
                "claimedInitialRewardsV2": list(range(1, 7)), "newbieQuest": 999, "activity": None}
         doc.update(overrides)
         return parse_player(doc)
@@ -340,6 +343,7 @@ class CatalystTests(unittest.TestCase):
             "level": 6, "grade": 1, "energy": 80, "maxEnergy": 100, "balance": 5000,
             "currentHealth": 130, "currentMana": 130, "currentLocationId": "city_1",
             "attributes": {"vitality": 3, "wisdom": 3},
+            "cityAccessPasses": {"1": 4_102_444_800},
             "claimedInitialRewardsV2": list(range(1, 7)), "newbieQuest": 999, "activity": None})
         # Raw material in hand, zero catalysts — exactly the blocked case.
         decision = orchestrator.decide_and_act(
@@ -442,3 +446,49 @@ class ChainValuationTests(unittest.TestCase):
         state = parse_player({"grade": 3, "energy": 50,
                               "attributes": {"vitality": 3, "wisdom": 3}})
         self.assertEqual(_GoldBudget(state, 100).grade, 3)
+
+
+class CityGateTests(unittest.TestCase):
+    """The workshop and its shop are behind a gate, and the gate is a purchase.
+
+    wallet-33 found this on 2026-08-28: it walked to city_13 for tanning salt,
+    was refused three times with PERMISSION_DENIED "City access pass expired or
+    required", and the circuit breaker paused it. That refusal is the reason
+    the whole gather-refine-sell chain had produced one filled order in the
+    fleet's lifetime.
+    """
+
+    def _state(self, **overrides):
+        doc = {"level": 6, "grade": 1, "energy": 80, "maxEnergy": 100,
+               "balance": 5000, "currentHealth": 130, "currentMana": 130,
+               "currentLocationId": "city_1", "attributePoints": 0,
+               "attributes": {"vitality": 3, "wisdom": 3},
+               "claimedInitialRewardsV2": list(range(1, 7)),
+               "newbieQuest": 999, "activity": None}
+        doc.update(overrides)
+        return parse_player(doc)
+
+    def test_the_gate_is_bought_before_the_catalyst(self):
+        from tests.test_orchestrator import make
+        orchestrator = make(config=Config(enabled=True, dry_run=True), api=FakeApi())
+        top = orchestrator.build_candidates(
+            self._state(), bids(copper_ingot=888), {"copper_ore": 90},
+            wallet_id="w1")[0]
+        self.assertEqual(top.action, "payCityEntryFee")
+        self.assertEqual(top.params["cityId"], "1")
+
+    def test_a_paid_gate_is_not_bought_twice(self):
+        from tests.test_orchestrator import make
+        orchestrator = make(config=Config(enabled=True, dry_run=True), api=FakeApi())
+        state = self._state(cityAccessPasses={"1": 4_102_444_800})
+        actions = [c.action for c in orchestrator.build_candidates(
+            state, bids(copper_ingot=888), {"copper_ore": 90}, wallet_id="w1")]
+        self.assertNotIn("payCityEntryFee", actions)
+
+    def test_no_gate_is_bought_where_there_is_no_workshop(self):
+        from tests.test_orchestrator import make
+        orchestrator = make(config=Config(enabled=True, dry_run=True), api=FakeApi())
+        actions = [c.action for c in orchestrator.build_candidates(
+            self._state(currentLocationId="farm_3"), bids(copper_ingot=888),
+            {"copper_ore": 90}, wallet_id="w1")]
+        self.assertNotIn("payCityEntryFee", actions)

@@ -299,6 +299,26 @@ class TelegramBot:
             "unlocked": self.vault.is_unlocked,
             "market_age_s": market_age,
             "wallets": self.status_map(),
+            "ledger": self.ledger_summary(),
+        }
+
+    def ledger_summary(self) -> dict:
+        """What the fleet has actually banked, for the dashboard header.
+
+        Read from data/profit_ledger.jsonl rather than from the wallet states:
+        a balance says what a wallet holds now, and the operator's question is
+        what the fleet is earning and from where.
+        """
+        try:
+            totals = ledger.totals()
+            by_source = ledger.gold_by_action()
+        except Exception:
+            return {}
+        return {
+            "gold": totals.gold, "xp": totals.xp, "hours": totals.hours,
+            "gold_per_hour": totals.gold_per_hour, "xp_per_hour": totals.xp_per_hour,
+            "battles_won": totals.battles_won, "battles_lost": totals.battles_lost,
+            "by_source": by_source,
         }
 
     # --- views -----------------------------------------------------------

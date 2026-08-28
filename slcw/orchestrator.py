@@ -538,6 +538,8 @@ class Orchestrator:
             spendable = self.spendable_gold(state, wallet_id)
             recipe = refining.best_recipe(
                 workshop, state.level, state.grade, holdings or {}, spendable, market)
+            wants_workshop = recipe is not None
+            catalyst = None
             if recipe is not None:
                 candidates.append(econ.refining_candidate(recipe, market, self.config))
             else:
@@ -545,6 +547,24 @@ class Orchestrator:
                     workshop, state, holdings or {}, spendable, market, stale)
                 if catalyst is not None:
                     candidates.append(catalyst)
+                    wants_workshop = True
+
+            # The shop and the workshop are both behind the city gate, and the
+            # gate is a purchase. Without this the wallet walks to city_13,
+            # asks the salt shop for a catalyst, and is refused with
+            # PERMISSION_DENIED "City access pass expired or required" — three
+            # times, then the circuit breaker pauses it. That is what wallet-33
+            # did on 2026-08-28, and it is why the whole gather-refine-sell
+            # chain has produced one filled order in the fleet's lifetime.
+            city_number = str(state.location_id or "").rsplit("_", 1)[-1]
+            if (wants_workshop and city_number.isdigit()
+                    and not self._has_city_access(state, city_number)):
+                gate = self._free(
+                    wallet_id, "payCityEntryFee", {"cityId": city_number},
+                    f"entry to {world.name_of(state.location_id)} "
+                    f"(the {workshop.id} workshop and its shop are behind it)")
+                if gate is not None:
+                    return [gate]
 
         # Gathering. Reverse-engineered from the frontend; the bot previously had
         # no access to this economy at all.

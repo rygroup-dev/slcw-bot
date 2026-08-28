@@ -342,6 +342,60 @@ def page_count(total: int, per_page: int = WALLETS_PER_PAGE) -> int:
     return max(1, (total + per_page - 1) // per_page)
 
 
+def _fleet_summary(ordered: list, ledger_summary: dict) -> list:
+    """The two questions a glance should answer: how far along, and earning what.
+
+    Levels and grades come from the wallets; the money comes from the ledger,
+    because a balance says what is held and the operator is asking what is
+    being made and from where.
+    """
+    levels: dict = {}
+    grades: dict = {}
+    for _, status in ordered:
+        state = status.get("state") or {}
+        if not state:
+            continue
+        levels[state.get("level")] = levels.get(state.get("level"), 0) + 1
+        grades[state.get("grade")] = grades.get(state.get("grade"), 0) + 1
+
+    lines = []
+    if levels:
+        spread = " · ".join(f"lv{lvl} ×{n}" for lvl, n in sorted(
+            (l, n) for l, n in levels.items() if l is not None)[-4:])
+        by_grade = " ".join(f"g{g}×{n}" for g, n in sorted(
+            (g, n) for g, n in grades.items() if g is not None))
+        lines.append(f"📊 {spread} · {by_grade}")
+
+    if ledger_summary:
+        gold = ledger_summary.get("gold", 0)
+        per_hour = ledger_summary.get("gold_per_hour", 0.0)
+        xp_hour = ledger_summary.get("xp_per_hour", 0.0)
+        lines.append(f"💰 ledger <b>{gold:,}g</b> · {per_hour:,.0f}g/j · {xp_hour:,.0f}xp/j")
+        won = ledger_summary.get("battles_won", 0)
+        lost = ledger_summary.get("battles_lost", 0)
+        if won or lost:
+            rate = won / (won + lost) * 100 if (won + lost) else 0
+            lines.append(f"⚔️ {won:,}W/{lost:,}L ({rate:.0f}%)")
+        sources = list((ledger_summary.get("by_source") or {}).items())[:4]
+        if sources:
+            lines.append("🏦 " + " · ".join(
+                f"{_source_name(name)} {amount:+,}" for name, amount in sources))
+    return lines
+
+
+_SOURCE_NAMES = {
+    "caravan": "caravan",
+    "claimTaskReward": "task",
+    "sellEquipmentItem": "jual gear",
+    "executeBlackMarketOrder": "black market",
+    "finishActivity": "aktivitas",
+}
+
+
+def _source_name(action: str) -> str:
+    return _SOURCE_NAMES.get(action, action)
+
+
 def render_status(fleet_state: dict, page: int = 1) -> str:
     """Fleet dashboard, paginated so a large fleet still fits one message."""
     if not fleet_state.get("unlocked"):
@@ -368,14 +422,17 @@ def render_status(fleet_state: dict, page: int = 1) -> str:
 
     mode = "🧪 DRY-RUN" if fleet_state.get("dry_run") else "🚀 LIVE"
     engine = "aktif" if fleet_state.get("enabled") else "claim-only"
+    paused = sum(1 for _, s in ordered if s.get("paused"))
 
     lines = [
         f"<b>⚔️ SLCW Fleet</b> · {mode}",
-        f"<code>{active}/{total} aktif</code> · <code>{gold:,}g total</code>"
+        f"<code>{active}/{total} aktif</code> · <code>{gold:,}g di tangan</code>"
+        + (f" · <code>{paused} paused</code>" if paused else "")
         + (f" · <code>{errored} error</code>" if errored else "")
         + f" · engine {engine}",
-        "",
     ]
+    lines.extend(_fleet_summary(ordered, fleet_state.get("ledger") or {}))
+    lines.append("")
 
     for wallet_id, status in window:
         state = status.get("state") or {}

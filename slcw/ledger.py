@@ -164,6 +164,40 @@ def totals(wallet_id: str | None = None) -> Totals:
     return result
 
 
+def gold_by_action(wallet_id: str | None = None, window_seconds: int = 0) -> dict:
+    """Realized gold grouped by what earned it, biggest first.
+
+    The fleet's own answer to "where does the money come from", and it has
+    corrected two guesses already: caravans have paid 6.9 million where farming
+    paid 11,772, and the black market has filled exactly one order. A dashboard
+    that only shows a balance cannot tell an operator either of those things.
+    """
+    totals: dict = {}
+    if not LEDGER_PATH.exists():
+        return totals
+    cutoff = time.time() - window_seconds if window_seconds else 0
+    for line in LEDGER_PATH.read_text().splitlines():
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if wallet_id and row.get("wallet_id") != wallet_id:
+            continue
+        if cutoff and int(row.get("ts", 0)) < cutoff:
+            continue
+        gold = int((row.get("reward") or {}).get("gold", 0) or 0)
+        if not gold:
+            continue
+        # A caravan is two rows, the outlay and the sale. Reporting them apart
+        # would show a million gold of "income" against a million of "cost";
+        # together they are the trade's actual profit.
+        key = row.get("action", "?")
+        if key == "dispatchCaravan" or (row.get("reward") or {}).get("type") == "caravan":
+            key = "caravan"
+        totals[key] = totals.get(key, 0) + gold
+    return dict(sorted(totals.items(), key=lambda kv: -kv[1]))
+
+
 def valued_totals(wallet_id: str | None = None, market=None) -> tuple[Totals, float]:
     """Totals plus the market value of accumulated item drops, when priced."""
     result = totals(wallet_id)

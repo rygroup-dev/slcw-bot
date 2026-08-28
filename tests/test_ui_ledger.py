@@ -151,9 +151,27 @@ class RenderTests(unittest.TestCase):
         wallets = {f"wallet-{i:02d}": self.STATE["wallets"]["wallet-01"]
                    for i in range(1, 8)}
         text = ui.render_status(dict(self.STATE, wallets=wallets), 1)
-        # Seven wallets holding 1000 gold each, all active.
+        # Seven wallets holding 1000 gold each, all active. "di tangan" rather
+        # than "total" since the header also carries the ledger's own figure,
+        # and the two answer different questions: held now, versus earned.
         self.assertIn("7/7 aktif", text)
-        self.assertIn("7,000g total", text)
+        self.assertIn("7,000g di tangan", text)
+
+    def test_the_header_carries_the_ledger_and_where_the_gold_came_from(self):
+        state = dict(self.STATE, ledger={
+            "gold": 5_757_312, "gold_per_hour": 19_905.0, "xp_per_hour": 12_256.0,
+            "battles_won": 57_876, "battles_lost": 14,
+            "by_source": {"claimTaskReward": 2_087_800, "caravan": 2_070_470}})
+        text = ui.render_status(state, 1)
+        self.assertIn("5,757,312g", text)
+        self.assertIn("19,905g/j", text)
+        self.assertIn("caravan +2,070,470", text)
+        self.assertIn("task +2,087,800", text)
+
+    def test_a_missing_ledger_does_not_break_the_header(self):
+        text = ui.render_status(dict(self.STATE, ledger={}), 1)
+        self.assertIn("aktif", text)
+        self.assertNotIn("ledger", text)
 
     def test_page_beyond_the_end_clamps(self):
         text = ui.render_status(self.STATE, page=99)

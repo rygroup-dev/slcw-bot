@@ -86,6 +86,10 @@ class TravelPlanningTests(unittest.TestCase):
         doc = {"level": 6, "grade": 1, "energy": 80, "maxEnergy": 100,
                "balance": 50000, "currentHealth": 130, "currentMana": 130,
                "currentLocationId": location, "attributePoints": 0,
+               # Entry already paid everywhere: the workshop and its shop sit
+               # behind the city gate, and buying that door is its own decision
+               # tested in test_refining.
+               "cityAccessPasses": {str(n): 4_102_444_800 for n in range(1, 19)},
                "attributes": {"vitality": 3, "wisdom": 3},
                "claimedInitialRewardsV2": list(range(1, 7)), "newbieQuest": 999, "activity": None,
                "freeEnergyRefillsToday": 3,
