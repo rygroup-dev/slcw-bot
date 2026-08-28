@@ -41,10 +41,22 @@ class SleepWindow:
     anchor_hour: int
     hours: float
 
+    @staticmethod
+    def _hour_of(moment: _dt.datetime) -> float:
+        """One clock for both questions below.
+
+        These two used to disagree: membership rounded the moment down to the
+        minute while the countdown kept the seconds. In the final minute of a
+        window that split verdict said "asleep, and the end is 24 hours away",
+        because a moment just past the end wraps the whole way round. wallet-08
+        hit it on 2026-08-28 and slept 24.06 hours.
+        """
+        return moment.hour + moment.minute / 60.0 + moment.second / 3600.0
+
     def contains(self, moment: _dt.datetime) -> bool:
         start = self.anchor_hour
         end = (self.anchor_hour + self.hours) % 24
-        hour = moment.hour + moment.minute / 60.0
+        hour = self._hour_of(moment)
         if start <= end:
             return start <= hour < end
         return hour >= start or hour < end
@@ -53,8 +65,7 @@ class SleepWindow:
         if not self.contains(moment):
             return 0.0
         end_hour = (self.anchor_hour + self.hours) % 24
-        hour = moment.hour + moment.minute / 60.0 + moment.second / 3600.0
-        delta = (end_hour - hour) % 24
+        delta = (end_hour - self._hour_of(moment)) % 24
         return delta * 3600.0
 
 

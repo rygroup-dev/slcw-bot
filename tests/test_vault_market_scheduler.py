@@ -228,6 +228,29 @@ class SchedulerTests(unittest.TestCase):
         self.assertTrue(window.contains(_dt.datetime(2026, 8, 16, 2, 0)))
         self.assertFalse(window.contains(_dt.datetime(2026, 8, 16, 12, 0)))
 
+    def test_last_seconds_of_the_window_do_not_cost_a_whole_day(self):
+        """wallet-08, 2026-08-28: window 03:00-06:28:12, tick at 06:28:53.
+
+        `contains` dropped the seconds and still said "asleep"; the countdown
+        kept them, saw the moment as already past the end, and wrapped the
+        remainder round the clock. The wallet slept 24.06 hours and threw away
+        a day of play plus its three free energy refills.
+        """
+        window = scheduler.SleepWindow(anchor_hour=3, hours=3.47)
+        edge = _dt.datetime(2026, 8, 28, 6, 28, 53, tzinfo=_dt.timezone.utc)
+        self.assertFalse(window.contains(edge))
+        self.assertEqual(window.seconds_until_wake(edge), 0.0)
+
+    def test_a_sleeping_wallet_never_waits_longer_than_its_window(self):
+        for anchor, hours in ((3, 3.47), (22, 3.7), (21, 3.15), (0, 4.0)):
+            window = scheduler.SleepWindow(anchor_hour=anchor, hours=hours)
+            for minute in range(0, 24 * 60):
+                moment = _dt.datetime(2026, 8, 28, tzinfo=_dt.timezone.utc) \
+                    + _dt.timedelta(minutes=minute, seconds=53)
+                self.assertLessEqual(window.seconds_until_wake(moment),
+                                     hours * 3600.0,
+                                     f"anchor={anchor} hours={hours} at {moment:%H:%M:%S}")
+
     def test_awake_wallet_is_not_deferred(self):
         wallet = {"sleep_anchor_hour": 2, "sleep_hours": 7}
         outside = _dt.datetime(2026, 8, 16, 15, 0, tzinfo=_dt.timezone.utc)
