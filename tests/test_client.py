@@ -6,6 +6,9 @@ record what was asked of them.
 import unittest
 from unittest.mock import patch
 
+from curl_cffi.const import CurlOpt
+
+from bot import client as client_mod
 from bot.client import POLL_TIMEOUT, TelegramClient, TelegramError
 
 
@@ -194,6 +197,32 @@ class LatencyTests(unittest.TestCase):
         with patch("bot.client.time.sleep"), self.assertRaises(TelegramError):
             client.call("getMe", attempts=2)
         self.assertEqual(client.calls, 0)
+
+
+class AddressFamilyTests(unittest.TestCase):
+    """2026-08-29: every poll hung for 65 seconds and Telegram went dead.
+
+    The host resolved api.telegram.org to an AAAA record only, and the route to
+    Telegram's IPv6 address is a black hole from this VPS — the connect never
+    refuses, it just hangs, and with no A record in the answer curl had nothing
+    to fall back to. IPv6 to other hosts was fine, so nothing looked broken.
+    Asking curl for A records directly answered in half a second.
+    """
+
+    def test_sessions_resolve_over_ipv4(self):
+        made = []
+
+        def record(*args, **kwargs):
+            made.append(kwargs)
+            return FakeSession()
+
+        with patch("bot.client.cffi.Session", side_effect=record):
+            TelegramClient("token")
+
+        self.assertEqual(len(made), 2, "both the send and poll sessions")
+        for kwargs in made:
+            self.assertEqual(kwargs["curl_options"][CurlOpt.IPRESOLVE],
+                             client_mod.IPRESOLVE_V4)
 
 
 if __name__ == "__main__":

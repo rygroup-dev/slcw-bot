@@ -17,8 +17,18 @@ import threading
 import time
 
 from curl_cffi import requests as cffi
+from curl_cffi.const import CurlOpt
 
 API_ROOT = "https://api.telegram.org/bot"
+
+# Resolve Telegram over IPv4 only. On 2026-08-29 this host began answering
+# AF_UNSPEC lookups for api.telegram.org with an AAAA record and nothing else,
+# and the route to that address is a black hole: the connect neither completes
+# nor refuses, so every poll burned its full 65 second timeout and the control
+# plane went silent. With no A record in the answer curl had nothing to fall
+# back to. IPv6 to other hosts still worked, so the fault was invisible from
+# outside. Telegram's IPv4 endpoint answers in half a second.
+IPRESOLVE_V4 = 1
 
 # Long-poll window. Telegram returns the moment an update arrives, so a longer
 # window costs nothing and simply reduces idle request churn.
@@ -47,8 +57,9 @@ class TelegramClient:
 
     def __init__(self, token: str):
         self.token = token
-        self._send_session = cffi.Session()
-        self._poll_session = cffi.Session()
+        resolve = {"curl_options": {CurlOpt.IPRESOLVE: IPRESOLVE_V4}}
+        self._send_session = cffi.Session(**resolve)
+        self._poll_session = cffi.Session(**resolve)
         self._lock = threading.Lock()
         self.calls = 0
         self.total_latency = 0.0
