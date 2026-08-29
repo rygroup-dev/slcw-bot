@@ -279,17 +279,28 @@ class FreeEnergyTests(unittest.TestCase):
         state = self._state(10, used=3, date="2026-08-15")
         self.assertEqual(state.free_refills_left("2026-08-16"), 3)
 
-    def test_refill_taken_when_energy_is_low(self):
-        api = FakeApi()
-        api.refill_energy_free = lambda session: api._record("refillEnergyFree")
-        orchestrator = make(config=Config(enabled=True, dry_run=False), api=api)
-        decision = orchestrator.decide_and_act({"id": "w1"}, None, self._state(10))
-        self.assertEqual(decision.action, "refillEnergyFree")
-
     def test_refill_not_wasted_on_a_nearly_full_bar(self):
         orchestrator = make(config=Config(enabled=True, dry_run=False), api=FakeApi())
         candidates = orchestrator.build_candidates(self._state(95))
         self.assertNotIn("refillEnergyFree", [c.action for c in candidates])
+
+    def test_refill_waits_for_a_bar_a_battle_can_still_spend(self):
+        """A refill fills to the brim, so every point left in the bar is thrown
+        away by calling it early. Measured on 2026-08-28: the old 35% floor
+        spent three refills at 35 energy each and gave the fleet 295 energy a
+        day where 400 was available. A battle costs one energy, and all fifty
+        wallets were observed sitting at exactly zero, so the bar does drain.
+        """
+        orchestrator = make(config=Config(enabled=True, dry_run=False), api=FakeApi())
+        candidates = orchestrator.build_candidates(self._state(35))
+        self.assertNotIn("refillEnergyFree", [c.action for c in candidates])
+
+    def test_refill_taken_once_the_bar_is_spent(self):
+        api = FakeApi()
+        api.refill_energy_free = lambda session: api._record("refillEnergyFree")
+        orchestrator = make(config=Config(enabled=True, dry_run=False), api=api)
+        decision = orchestrator.decide_and_act({"id": "w1"}, None, self._state(0))
+        self.assertEqual(decision.action, "refillEnergyFree")
 
     def test_no_refill_once_the_daily_quota_is_gone(self):
         orchestrator = make(config=Config(enabled=True, dry_run=False), api=FakeApi())

@@ -34,9 +34,15 @@ BATTLE_LOCATIONS = {"farm_3", "wildland_1"}
 # Never start a fight below this health ratio, whatever the score says.
 BATTLE_MIN_HEALTH_RATIO = 0.45
 
-# Take a free energy refill only once the bar has drained this far, so a daily
-# use is never spent restoring a handful of points.
-ENERGY_REFILL_RATIO = 0.35
+# A free refill fills the bar to the brim, so every point still in it when the
+# call is made is thrown away. Measured on 2026-08-28: a 35% floor spent all
+# three daily refills at 35 energy and handed each wallet 295 energy a day out
+# of the 400 available. A battle costs one energy and all fifty wallets were
+# found sitting at exactly zero, so waiting for an all-but-empty bar costs no
+# idle time. The floor is not zero only so that a wallet which cannot afford
+# anything at its last few points still spends its refills before the day rolls
+# over and takes them away.
+ENERGY_REFILL_FLOOR = econ.BATTLE_ENERGY
 
 # completeNewbieQuest() takes no arguments and was observed live paying 400,
 # then 500 XP with nextQuest incrementing (6, then 7) — a free, escalating
@@ -299,7 +305,7 @@ class Orchestrator:
         # Three free refills a day, and energy gates almost everything. Only worth
         # taking once the bar has drained enough that a refill is not wasted.
         if (state.free_refills_left() > 0
-                and state.energy <= state.max_energy * ENERGY_REFILL_RATIO):
+                and state.energy <= ENERGY_REFILL_FLOOR):
             return [econ.energy_refill_candidate(state)]
 
         # Chests are free loot sitting in a slot, and gear in an empty slot is
