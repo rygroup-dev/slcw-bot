@@ -77,6 +77,22 @@ class PlayerTests(unittest.TestCase):
         doc = dict(self.DOC, claimedInitialRewardsV2=[1, 3])
         self.assertEqual(parse_player(doc).unclaimed_levels(), [2, 4, 5, 6])
 
+    def test_the_reward_ladder_stops_at_thirty(self):
+        """Measured on 2026-09-07: every one of the fifty live accounts held
+        exactly levels 1..30 in claimedInitialRewardsV2, and forty-five of them
+        were past level 30. Asking for 31 answers "Invalid level selected" or a
+        plain HTTP 500, so a wallet that keeps asking spends a cycle an hour on
+        a call that can never succeed."""
+        doc = dict(self.DOC, level=33,
+                   claimedInitialRewardsV2=list(range(1, 31)))
+        self.assertEqual(parse_player(doc).unclaimed_levels(), [])
+
+    def test_a_gap_below_the_ladder_top_is_still_claimable(self):
+        """Capping the ladder must not hide a reward that really is waiting."""
+        doc = dict(self.DOC, level=33,
+                   claimedInitialRewardsV2=[l for l in range(1, 31) if l != 12])
+        self.assertEqual(parse_player(doc).unclaimed_levels(), [12])
+
     def test_busy_when_activity_running(self):
         doc = dict(self.DOC, activity={"type": "production", "endTime": {"seconds": 9999999999}})
         self.assertTrue(parse_player(doc).is_busy)

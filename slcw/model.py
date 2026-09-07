@@ -174,8 +174,16 @@ class PlayerState:
         used = self.free_refills_today if self.last_free_refill_date == today else 0
         return max(0, self.FREE_REFILLS_PER_DAY - used)
 
+    # The one-off level rewards run out at 30. Read live from all fifty
+    # accounts on 2026-09-07: every claimedInitialRewardsV2 held exactly 1..30
+    # and nothing above it, while forty-five of the wallets were already past
+    # level 30. Asking for 31 answers "Invalid level selected", and sometimes a
+    # bare HTTP 500, so a wallet that keeps asking never stops asking.
+    LAST_REWARDED_LEVEL = 30
+
     def unclaimed_levels(self) -> list[int]:
-        return [lvl for lvl in range(1, self.level + 1) if lvl not in self.claimed_levels]
+        top = min(self.level, self.LAST_REWARDED_LEVEL)
+        return [lvl for lvl in range(1, top + 1) if lvl not in self.claimed_levels]
 
 
 def parse_player(doc: dict) -> PlayerState:

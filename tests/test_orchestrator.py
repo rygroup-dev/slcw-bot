@@ -12,7 +12,7 @@ from slcw.config import Config
 from slcw.market import build_snapshot
 from slcw.model import parse_player
 from slcw.orchestrator import Orchestrator
-from slcw.transport import ApiError
+from slcw.transport import ApiError, TransportError
 
 
 class FakeApi:
@@ -25,12 +25,17 @@ class FakeApi:
         # (action, status_code, message) to reject, so a test can reproduce a
         # server refusal such as completeNewbieQuest's "Insufficient items".
         self.fail_with = None
+        # (action, exception) for failures that are not structured rejections —
+        # a plain HTTP 500 arrives as a TransportError, not an ApiError.
+        self.raise_with = None
 
     def _record(self, name, **kwargs):
         self.calls.append((name, kwargs))
         if self.fail_with and self.fail_with[0] == name:
             _, status_code, message = self.fail_with
             raise ApiError(message, status_code=status_code)
+        if self.raise_with and self.raise_with[0] == name:
+            raise self.raise_with[1]
         return {"success": True}
 
     def finish_activity(self, session):
@@ -444,6 +449,45 @@ class RejectionParkingTests(unittest.TestCase):
         second = orchestrator.decide_and_act(
             {"id": "w1"}, None, state, None, None, None, None)
         self.assertNotEqual(second.action, "claimInitialReward")
+
+    def test_a_free_action_the_server_breaks_on_is_parked_too(self):
+        """Measured live on 2026-09-07: claimInitialReward for level 31 answered
+        sometimes "Invalid level selected" and sometimes a bare HTTP 500. Only
+        the first arrives as an ApiError, so only the first was parked; the
+        plain 500 was proposed again on the very next cycle and three of them in
+        a row tripped the circuit breaker. Six wallets sat paused for twenty-one
+        hours that way."""
+        api = FakeApi()
+        api.raise_with = ("claimInitialReward",
+                          TransportError("HTTP 500", status=500))
+        orchestrator = make(api=api)
+        state = parse_player({
+            "level": 20, "grade": 2, "energy": 80, "maxEnergy": 100,
+            "balance": 5000, "currentHealth": 210, "currentMana": 130,
+            "currentLocationId": "city_2",
+            "attributes": {"vitality": 3, "wisdom": 3},
+            "claimedInitialRewardsV2": list(range(1, 20)), "newbieQuest": 999,
+            "activity": None, "freeEnergyRefillsToday": 3,
+            "lastFreeEnergyRefillDate": "2099-01-01"})
+
+        first = orchestrator.decide_and_act(
+            {"id": "w1"}, None, state, None, None, None, None)
+        self.assertEqual(first.action, "claimInitialReward")
+        # A broken call is a real failure and still has to be reported.
+        self.assertIn("HTTP 500", first.error)
+
+        second = orchestrator.decide_and_act(
+            {"id": "w1"}, None, state, None, None, None, None)
+        self.assertNotEqual(second.action, "claimInitialReward")
+
+    def test_a_paid_action_that_breaks_is_not_parked(self):
+        """Parking is for calls that are refused, not for a server having a bad
+        minute. A battle is where the gold is, so a transport failure there must
+        leave it on the table for the next cycle."""
+        api = FakeApi()
+        api.raise_with = ("battle", TransportError("HTTP 500", status=500))
+        orchestrator = make(api=api)
+        self.assertFalse(orchestrator.rejections.is_parked("w1", "battle", {}))
 
     def test_a_refused_gear_upgrade_does_not_freeze_the_wallet(self):
         """Same shape, different branch: the swap needs a free slot to put the

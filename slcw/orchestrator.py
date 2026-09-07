@@ -20,7 +20,7 @@ from . import rejections as rejections_mod
 from .rejections import RejectionMemory
 from .config import Config
 from .guardrails import GuardrailViolation
-from .transport import ApiError
+from .transport import ApiError, TransportError
 
 # Expected drops per battle, by monster. Only entries confirmed from live
 # rewards appear here; anything else is valued at zero rather than guessed.
@@ -161,6 +161,18 @@ class Orchestrator:
         except GuardrailViolation as exc:
             decision.action = "blocked"
             decision.error = str(exc)
+        except TransportError as exc:
+            # Not every refusal is structured. claimInitialReward for a level
+            # past the end of the ladder answered "Invalid level selected" some
+            # cycles and a bare HTTP 500 on others; only the first arrived as an
+            # ApiError, so only the first was parked. The plain 500 came back on
+            # the very next cycle and three in a row tripped the circuit
+            # breaker — six wallets were paused for twenty-one hours on
+            # 2026-09-06 that way. A broken call is still a failure and still
+            # counts, but it must not be the wallet's next move as well.
+            decision.error = f"TransportError: {exc}"
+            self.rejections.park(
+                wallet["id"], decision.action, decision.params, str(exc))
         except ApiError as exc:
             # A benign rejection means the server already did the thing; it is not
             # a failure and must not count toward the circuit breaker.
