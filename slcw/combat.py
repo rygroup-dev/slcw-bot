@@ -431,3 +431,46 @@ def best_source(item: str, memory: "CombatMemory | None",
     close = [m for m, rate in rates.items()
              if rate * SOURCE_LEVEL_TOLERANCE >= best_rate]
     return min(close, key=lambda m: (monster_level(m), -rates[m], m))
+
+
+# How many fights a relative gets before its own record overrides the family's.
+# werewolf_lvl37_1 sat on one lost battle and no drops for weeks, which kept
+# every level 39+ wallet off a quest asking for 16,000 werewolf claws; a
+# level-41 wallet beat it on the first try on 2026-09-13 and got a claw.
+FAMILY_TRIAL_BATTLES = 5
+
+
+def monster_family(monster_id: str) -> str:
+    return monster_id.split("_lvl")[0]
+
+
+def family_source(item: str, memory: "CombatMemory | None",
+                  max_level: int | None = None,
+                  min_level: int | None = None) -> str | None:
+    """The easiest monster in reach whose relatives are measured to drop this.
+
+    The fallback for when `best_source` finds nothing in the level band. Drop
+    tables are per family in every case measured — each cyberbear from level 6
+    to 33 drops cyberclaw, each werewolf from 4 to 30 werewolfclaw — so a
+    relative is a better bet than grinding something that drops nothing. A
+    relative that has been given a fair trial and lost, or dropped nothing, is
+    passed over.
+    """
+    if memory is None or not item:
+        return None
+    families = {monster_family(m) for m, model in memory.models.items()
+                if model.battles and model.avg_drops().get(item, 0.0) > 0}
+    if not families:
+        return None
+    for monster_id in known_monsters(max_level):
+        if min_level is not None and monster_level(monster_id) < min_level:
+            continue
+        if monster_family(monster_id) not in families:
+            continue
+        model = memory.models.get(monster_id)
+        if (model is not None and model.battles >= FAMILY_TRIAL_BATTLES
+                and (model.win_rate < 0.5
+                     or model.avg_drops().get(item, 0.0) <= 0)):
+            continue
+        return monster_id
+    return None

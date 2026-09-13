@@ -457,6 +457,49 @@ class SourceReachTests(unittest.TestCase):
         self.assertIsNone(best_source("frogslime", self.memory, min_level=40))
 
 
+class FamilySourceTests(unittest.TestCase):
+    """A relative of a proven source, for wallets that outlevelled every
+    measured one. Found 2026-09-13: level 39+ wallets had no measured claw
+    source in reach and never touched a quest asking for 32,000 claws."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.memory = CombatMemory(path=Path(self.tmp.name) / "combat.json")
+        for _ in range(10):
+            self.memory.record_battle(
+                "bigfrog_lvl1_1", {"winner": "player", "xp": 5,
+                                   "items": [{"id": "frogslime", "quantity": 2}]}, 3, 4)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_an_untried_relative_in_reach_is_named(self):
+        from slcw.combat import family_source
+        self.assertEqual(family_source("frogslime", self.memory,
+                                       max_level=34, min_level=34),
+                         "bigfrog_lvl34_1")
+
+    def test_a_single_lost_fight_does_not_rule_a_relative_out(self):
+        from slcw.combat import family_source
+        self.memory.record_battle("bigfrog_lvl34_1", {"winner": "monster"}, 8, 200)
+        self.assertEqual(family_source("frogslime", self.memory,
+                                       max_level=34, min_level=34),
+                         "bigfrog_lvl34_1")
+
+    def test_a_relative_that_had_a_fair_trial_and_dropped_nothing_is_passed_over(self):
+        from slcw.combat import FAMILY_TRIAL_BATTLES, family_source
+        for _ in range(FAMILY_TRIAL_BATTLES):
+            self.memory.record_battle(
+                "bigfrog_lvl34_1", {"winner": "player", "xp": 5, "items": []}, 3, 4)
+        self.assertIsNone(family_source("frogslime", self.memory,
+                                        max_level=34, min_level=34))
+
+    def test_no_measured_family_means_no_source(self):
+        from slcw.combat import family_source
+        self.assertIsNone(family_source("imperialseal", self.memory))
+        self.assertIsNone(family_source("frogslime", None))
+
+
 class SelectionReachTests(unittest.TestCase):
     """Ordinary monster choice has the same floor."""
 

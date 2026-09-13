@@ -1075,8 +1075,48 @@ class QuestFarmingTests(unittest.TestCase):
         level is outside your reach" — and that refusal reads as benign. The
         first version of this errand sent seven level-15 wallets at a level-1
         frog and they reported no error for half an hour while collecting
-        nothing at all."""
-        self.assertIsNone(self._errand(orch=self._orch(taught="bigfrog_lvl1_1")))
+        nothing at all. A reachable relative is fair game; the frog itself
+        never is."""
+        from slcw.combat import in_reach
+        errand = self._errand(orch=self._orch(taught="bigfrog_lvl1_1"))
+        if errand is not None:
+            self.assertNotEqual(errand.params["monsterId"], "bigfrog_lvl1_1")
+            self.assertTrue(in_reach(errand.params["monsterId"], 12))
+
+    def test_a_wallet_that_outlevelled_every_measured_source_fights_a_relative(self):
+        from slcw.combat import in_reach, monster_family
+        errand = self._errand(orch=self._orch(taught="bigfrog_lvl1_1"),
+                              state=self._state(
+                                  level=34, grade=3,
+                                  claimedInitialRewardsV2=list(range(1, 31))))
+        self.assertIsNotNone(errand)
+        self.assertEqual(monster_family(errand.params["monsterId"]), "bigfrog")
+        self.assertTrue(in_reach(errand.params["monsterId"], 34))
+
+    def test_the_other_requirement_is_hunted_when_the_bigger_one_has_no_source(self):
+        quest = clan.parse_quest({
+            "requirements": [
+                {"itemId": "frogslime", "required": 2_000, "collected": 471},
+                {"itemId": "imperialseal", "required": 50_000, "collected": 0}],
+            "rewardDkpPool": 1_000, "rewardClanXp": 3_500,
+            "completedAt": None}, quest_id="q1")
+        errand = self._errand(clan_ctx=self._clan(quest=quest))
+        self.assertIsNotNone(errand)
+        self.assertIn("frogslime", errand.reason)
+
+    def test_a_city_wallet_with_no_load_to_send_walks_to_the_fighting(self):
+        cands = self._candidates(state=self._state(currentLocationId="city_2"))
+        self.assertEqual([c.action for c in cands], ["startTravel"])
+        self.assertEqual(cands[0].params, {"destinationId": "farm_3"})
+        self.assertIn("clan quest", cands[0].reason)
+
+    def test_a_city_wallet_about_to_dispatch_a_caravan_keeps_trading(self):
+        from types import SimpleNamespace
+        orch = self._orch()
+        orch._caravan_candidate = lambda *a, **k: SimpleNamespace(action="dispatchCaravan")
+        self.assertIsNone(orch._quest_errand(
+            self._state(currentLocationId="city_2"), self._clan()["quest"],
+            {}, "w1", {"city_2": {}}))
 
     def test_the_reachable_source_wins_over_the_easier_one(self):
         orch = self._orch(taught="bigfrog_lvl1_1")

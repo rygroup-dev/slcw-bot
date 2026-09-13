@@ -459,7 +459,7 @@ class Orchestrator:
         # ever, applying once per wallet, admitting once per applicant, the quest
         # once a week, and a resource submission empties the stack it submits.
         clan_candidate = self._clan_candidate(
-            state, holdings, clan_context, wallet_id)
+            state, holdings, clan_context, wallet_id, cities=cities)
         if clan_candidate is not None:
             return [clan_candidate]
 
@@ -1027,7 +1027,8 @@ class Orchestrator:
         except (TypeError, ValueError):
             return False
 
-    def _clan_candidate(self, state, holdings, clan_context, wallet_id=None):
+    def _clan_candidate(self, state, holdings, clan_context, wallet_id=None,
+                        cities=None):
         """Free clan participation, in the order that costs the fleet least.
 
         Submitting quest resources spends raw drops the market has no bids for,
@@ -1158,7 +1159,7 @@ class Orchestrator:
             # bounded and it is worth it. One quest pays 3,500 clan XP, which
             # carries a new clan from ten seats to thirty-five, and the fleet
             # has thirty wallets waiting on exactly that.
-            errand = self._quest_errand(state, quest)
+            errand = self._quest_errand(state, quest, holdings, wallet_id, cities)
             if errand is not None:
                 return errand
 
@@ -1177,35 +1178,63 @@ class Orchestrator:
                     return donate
         return None
 
-    def _quest_errand(self, state, quest):
+    def _quest_errand(self, state, quest, holdings=None, wallet_id=None,
+                      cities=None):
         """A battle picked for what it drops rather than what it pays.
 
         Returns None whenever the fight itself would be a bad idea — no energy,
         too hurt, or standing somewhere combat is refused. That refusal is
         server-side and classifies as benign, so offering a battle from a city
         would burn the cycle and quietly reset the error counter instead of
-        showing up as a problem.
+        showing up as a problem. A city wallet with no load to send walks to
+        the fighting instead.
         """
         outstanding = quest.outstanding()
-        if not outstanding:
-            return None
-        if (state.energy < econ.BATTLE_ENERGY
-                or state.health_ratio < BATTLE_MIN_HEALTH_RATIO
-                or state.location_id not in BATTLE_LOCATIONS):
+        if not outstanding or state.energy < econ.BATTLE_ENERGY:
             return None
 
-        # Whichever the quest still needs most, so one errand does not finish a
-        # short requirement and leave a long one untouched.
-        item = max(outstanding, key=lambda i: outstanding[i])
-        monster = combat_mod.best_source(
-            item, self.combat, max_level=state.level,
-            min_level=state.level - combat_mod.REACH_BELOW)
+        # Most-needed item first, but not only that one. On 2026-09-13 every
+        # level 39+ wallet had no measured source in reach for the bigger
+        # requirement, gave up there, and ground frogslime for two days while
+        # the quest sat at 13%. A relative of a measured source is tried when
+        # nothing measured is in reach.
+        low = state.level - combat_mod.REACH_BELOW
+        item = monster = None
+        for wanted in sorted(outstanding, key=lambda i: -outstanding[i]):
+            monster = (combat_mod.best_source(
+                           wanted, self.combat, max_level=state.level, min_level=low)
+                       or combat_mod.family_source(
+                           wanted, self.combat, max_level=state.level, min_level=low))
+            if monster is not None:
+                item = wanted
+                break
         if monster is None:
             return None
+        why = (f"{outstanding[item]:,} more {item} "
+               f"(clan quest, +{quest.reward_clan_xp:,} clan XP)")
+
+        if state.location_id not in BATTLE_LOCATIONS:
+            # A wallet about to dispatch a caravan keeps trading: that gold is
+            # real and the quest has other hands. One that is hunting for nine
+            # gold, or idle, walks to the Borderlands — twelve city wallets were
+            # doing exactly that while the quest needed 28,000 claws.
+            if cities and state.energy >= caravan_mod.DISPATCH_ENERGY:
+                trade = self._caravan_candidate(state, cities, holdings, wallet_id)
+                if trade is not None and trade.action == "dispatchCaravan":
+                    return None
+            zone = "farm_3"
+            seconds = world.travel_seconds(state.location_id, zone)
+            params = {"destinationId": zone}
+            if seconds == float("inf") or self._parked(wallet_id, "startTravel", params):
+                return None
+            return econ.free_candidate(
+                "startTravel", params,
+                f"walk {int(seconds) // 60}m to {world.name_of(zone)} for {why}")
+
+        if state.health_ratio < BATTLE_MIN_HEALTH_RATIO:
+            return None
         return econ.free_candidate(
-            "battle", {"monsterId": monster},
-            f"{monster} for {outstanding[item]:,} more {item} "
-            f"(clan quest, +{quest.reward_clan_xp:,} clan XP)")
+            "battle", {"monsterId": monster}, f"{monster} for {why}")
 
     def _travel_candidate(self, state, market, holdings, local_best: float,
                           wallet_id: str | None = None):
