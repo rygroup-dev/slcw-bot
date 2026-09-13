@@ -1193,23 +1193,31 @@ class Orchestrator:
         if not outstanding or state.energy < econ.BATTLE_ENERGY:
             return None
 
-        # Most-needed item first, but not only that one. On 2026-09-13 every
-        # level 39+ wallet had no measured source in reach for the bigger
-        # requirement, gave up there, and ground frogslime for two days while
-        # the quest sat at 13%. A relative of a measured source is tried when
-        # nothing measured is in reach.
+        # Every outstanding item, from a measured source or an in-reach
+        # relative of one. On 2026-09-13 every level 39+ wallet had no measured
+        # source in reach for the bigger requirement, gave up there, and ground
+        # frogslime for two days while the quest sat at 13%. Options are ranked
+        # by items per second — rest heals one HP a second, so damage is time —
+        # weighted by how much of each item is still owed, which keeps the
+        # requirements moving together: a level-41 wallet gets 1.43 werewolf
+        # claws a fight from werewolf_lvl37_1 and 0.83 cyber claws from
+        # cyberbear_lvl39_2 for the same damage.
         low = state.level - combat_mod.REACH_BELOW
-        item = monster = None
-        for wanted in sorted(outstanding, key=lambda i: -outstanding[i]):
-            monster = (combat_mod.best_source(
-                           wanted, self.combat, max_level=state.level, min_level=low)
-                       or combat_mod.family_source(
-                           wanted, self.combat, max_level=state.level, min_level=low))
-            if monster is not None:
-                item = wanted
-                break
-        if monster is None:
+        most = max(outstanding.values())
+        options = []
+        for wanted, owed in outstanding.items():
+            sources = {
+                combat_mod.best_source(
+                    wanted, self.combat, max_level=state.level, min_level=low),
+                combat_mod.family_source(
+                    wanted, self.combat, max_level=state.level, min_level=low),
+            } - {None}
+            for source in sources:
+                pace = combat_mod.items_per_second(wanted, source, self.combat)
+                options.append((pace * owed / most, wanted, source))
+        if not options:
             return None
+        _, item, monster = max(options)
         why = (f"{outstanding[item]:,} more {item} "
                f"(clan quest, +{quest.reward_clan_xp:,} clan XP)")
 
@@ -1231,8 +1239,15 @@ class Orchestrator:
                 "startTravel", params,
                 f"walk {int(seconds) // 60}m to {world.name_of(zone)} for {why}")
 
-        if state.health_ratio < BATTLE_MIN_HEALTH_RATIO:
-            return None
+        # Rest costs one second per missing hit point whenever it is taken, but
+        # a lost fight empties the bar and drops nothing — so the errand rests
+        # first when the monster deals more than the wallet can take.
+        need = state.max_health * BATTLE_MIN_HEALTH_RATIO
+        profile = combat_mod.fight_profile(item, monster, self.combat)
+        if profile is not None:
+            need = max(need, profile[1] * combat_mod.ERRAND_HP_MARGIN)
+        if state.health < min(need, state.max_health):
+            return econ.relax_candidate(state)
         return econ.free_candidate(
             "battle", {"monsterId": monster}, f"{monster} for {why}")
 

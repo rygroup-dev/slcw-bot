@@ -474,3 +474,51 @@ def family_source(item: str, memory: "CombatMemory | None",
             continue
         return monster_id
     return None
+
+
+# Rest heals one hit point per second, always to full — read live on
+# 2026-09-13: 175 HP missing rested 175 s, 304 missing rested 304 s. So the
+# damage a fight deals is time. On top of that a fight costs about 35 s of
+# turns and three reaction delays (fight, start rest, finish rest); the fleet's
+# ledger put the whole cycle at ~125 s plus the damage.
+FIGHT_OVERHEAD_SECONDS = 125.0
+
+# A quest fight is only started with this much more health than the monster
+# deals on average. A loss empties the bar and drops nothing: 19% of quest
+# fights were lost on 2026-09-13, most started at the 45% floor against
+# monsters dealing 140-190.
+ERRAND_HP_MARGIN = 1.25
+
+
+def fight_profile(item: str, monster_id: str,
+                  memory: "CombatMemory | None") -> tuple[float, float] | None:
+    """(items per fight, damage per fight), measured or borrowed from kin.
+
+    A monster with a fair trial behind it speaks for itself. Otherwise the
+    nearest measured relative stands in, its damage scaled by how much harder
+    this one hits on paper.
+    """
+    if memory is None:
+        return None
+    model = memory.models.get(monster_id)
+    if model is not None and model.battles >= FAMILY_TRIAL_BATTLES:
+        return model.avg_drops().get(item, 0.0), model.avg_damage
+    family, level = monster_family(monster_id), monster_level(monster_id)
+    kin = [(abs(monster_level(m) - level), m) for m, other in memory.models.items()
+           if monster_family(m) == family and other.battles
+           and other.avg_drops().get(item, 0.0) > 0]
+    if not kin:
+        return None
+    _, sibling = min(kin)
+    measured = memory.models[sibling]
+    scale = max(1, monster_power(monster_id)) / max(1, monster_power(sibling))
+    return measured.avg_drops()[item], measured.avg_damage * scale
+
+
+def items_per_second(item: str, monster_id: str,
+                     memory: "CombatMemory | None") -> float:
+    profile = fight_profile(item, monster_id, memory)
+    if profile is None:
+        return 0.0
+    rate, damage = profile
+    return rate / (FIGHT_OVERHEAD_SECONDS + damage)

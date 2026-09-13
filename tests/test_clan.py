@@ -1118,6 +1118,72 @@ class QuestFarmingTests(unittest.TestCase):
             self._state(currentLocationId="city_2"), self._clan()["quest"],
             {}, "w1", {"city_2": {}}))
 
+    def _two_claw_quest(self):
+        return clan.parse_quest({
+            "requirements": [
+                {"itemId": "cyberclaw", "required": 16_000, "collected": 2_000},
+                {"itemId": "werewolfclaw", "required": 16_000, "collected": 2_000}],
+            "rewardDkpPool": 8_000, "rewardClanXp": 28_000,
+            "completedAt": None}, quest_id="q2")
+
+    def test_the_faster_claw_per_second_wins_for_a_high_level_wallet(self):
+        """Measured 2026-09-13 for level 40-42 wallets: werewolf_lvl37_1 gave
+        1.43 claws a fight, cyberbear_lvl39_2 0.83, for the same damage."""
+        orch = self._orch(taught=None)
+        for n in range(20):
+            orch.combat.record_battle(
+                "werewolf_lvl37_1", {"winner": "player", "xp": 90,
+                                     "items": [{"id": "werewolfclaw", "quantity": 1}]}, 7, 187)
+            orch.combat.record_battle(
+                "cyberbear_lvl39_2", {"winner": "player", "xp": 90,
+                                      "items": [{"id": "cyberclaw", "quantity": 1}] if n % 2 else []},
+                8, 188)
+        errand = self._errand(
+            orch=orch, clan_ctx=self._clan(quest=self._two_claw_quest()),
+            state=self._state(level=41, grade=3, claimedInitialRewardsV2=list(range(1, 31)),
+                              attributes={"wisdom": 3, "vitality": 30},
+                              currentHealth=400, maxHealth=400))
+        self.assertIsNotNone(errand)
+        self.assertEqual(errand.params["monsterId"], "werewolf_lvl37_1")
+
+    def test_a_claw_owed_far_more_outranks_a_slightly_faster_one(self):
+        orch = self._orch(taught=None)
+        for _ in range(20):
+            orch.combat.record_battle(
+                "werewolf_lvl10_2", {"winner": "player", "xp": 40,
+                                     "items": [{"id": "werewolfclaw", "quantity": 1}]}, 7, 40)
+            orch.combat.record_battle(
+                "cyberbear_lvl12_3", {"winner": "player", "xp": 40,
+                                      "items": [{"id": "cyberclaw", "quantity": 1}]}, 7, 50)
+        quest = clan.parse_quest({
+            "requirements": [
+                {"itemId": "cyberclaw", "required": 16_000, "collected": 2_000},
+                {"itemId": "werewolfclaw", "required": 16_000, "collected": 15_000}],
+            "rewardDkpPool": 8_000, "rewardClanXp": 28_000,
+            "completedAt": None}, quest_id="q2")
+        errand = self._errand(orch=orch, clan_ctx=self._clan(quest=quest))
+        self.assertIsNotNone(errand)
+        self.assertIn("cyberclaw", errand.reason)
+
+    def test_a_wallet_short_of_the_monsters_damage_rests_before_fighting(self):
+        """Above the 45% floor but below what the monster deals: a loss would
+        empty the bar and drop nothing, so it rests first."""
+        orch = self._orch(taught=None)
+        for _ in range(10):
+            orch.combat.record_battle(
+                "bigfrog_lvl7_2", {"winner": "player", "xp": 1,
+                                   "items": [{"id": "frogslime", "quantity": 2}]}, 3, 100)
+        cands = self._candidates(orch=orch, state=self._state(currentHealth=100))
+        self.assertEqual([c.action for c in cands], ["startRelax"])
+
+    def test_a_wallet_with_enough_health_for_the_monster_still_fights(self):
+        orch = self._orch(taught=None)
+        for _ in range(10):
+            orch.combat.record_battle(
+                "bigfrog_lvl7_2", {"winner": "player", "xp": 1,
+                                   "items": [{"id": "frogslime", "quantity": 2}]}, 3, 100)
+        self.assertIsNotNone(self._errand(orch=orch, state=self._state(currentHealth=130)))
+
     def test_the_reachable_source_wins_over_the_easier_one(self):
         orch = self._orch(taught="bigfrog_lvl1_1")
         for _ in range(6):

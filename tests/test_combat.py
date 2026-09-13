@@ -500,6 +500,47 @@ class FamilySourceTests(unittest.TestCase):
         self.assertIsNone(family_source("frogslime", None))
 
 
+class ThroughputTests(unittest.TestCase):
+    """Rest heals one HP a second, so a fight's damage is time spent."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.memory = CombatMemory(path=Path(self.tmp.name) / "combat.json")
+        for _ in range(10):
+            self.memory.record_battle(
+                "bigfrog_lvl1_1", {"winner": "player", "xp": 5,
+                                   "items": [{"id": "frogslime", "quantity": 2}]}, 3, 4)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_a_measured_monster_is_paced_by_its_own_record(self):
+        from slcw.combat import FIGHT_OVERHEAD_SECONDS, items_per_second
+        self.assertAlmostEqual(items_per_second("frogslime", "bigfrog_lvl1_1", self.memory),
+                               2 / (FIGHT_OVERHEAD_SECONDS + 4))
+
+    def test_the_same_drops_for_more_damage_are_slower(self):
+        from slcw.combat import items_per_second
+        for _ in range(10):
+            self.memory.record_battle(
+                "bigfrog_lvl13_2", {"winner": "player", "xp": 5,
+                                    "items": [{"id": "frogslime", "quantity": 2}]}, 3, 200)
+        self.assertLess(items_per_second("frogslime", "bigfrog_lvl13_2", self.memory),
+                        items_per_second("frogslime", "bigfrog_lvl1_1", self.memory))
+
+    def test_an_untried_relative_borrows_the_nearest_record_scaled_by_power(self):
+        from slcw.combat import fight_profile, monster_power
+        rate, damage = fight_profile("frogslime", "bigfrog_lvl34_1", self.memory)
+        self.assertEqual(rate, 2)
+        self.assertAlmostEqual(
+            damage, 4 * monster_power("bigfrog_lvl34_1") / monster_power("bigfrog_lvl1_1"))
+
+    def test_nothing_measured_is_worth_nothing(self):
+        from slcw.combat import items_per_second
+        self.assertEqual(items_per_second("imperialseal", "bigfrog_lvl1_1", self.memory), 0.0)
+        self.assertEqual(items_per_second("frogslime", "bigfrog_lvl1_1", None), 0.0)
+
+
 class SelectionReachTests(unittest.TestCase):
     """Ordinary monster choice has the same floor."""
 
