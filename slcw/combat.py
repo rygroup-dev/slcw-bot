@@ -489,6 +489,16 @@ FIGHT_OVERHEAD_SECONDS = 125.0
 # monsters dealing 140-190.
 ERRAND_HP_MARGIN = 1.25
 
+# How hard what is still owed pulls on the choice between quest items. A plain
+# ratio barely separates 13,468 owed from 13,130, so in the first hour every
+# wallet chose the 7%-faster werewolf and cyber claws came in at 39 an hour to
+# the werewolf's 293 — leaving the level 40+ wallets, whose only cyber source
+# wins 59% of the time, to finish the cyber claws alone at the end. Raised to
+# this power, a 2.5% lead is enough to send the wallets that fight both
+# monsters about equally well to the lagging item, while wallets far better at
+# one keep to it.
+OWED_WEIGHT_POWER = 8
+
 
 def fight_profile(item: str, monster_id: str,
                   memory: "CombatMemory | None") -> tuple[float, float] | None:

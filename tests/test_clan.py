@@ -1146,6 +1146,32 @@ class QuestFarmingTests(unittest.TestCase):
         self.assertIsNotNone(errand)
         self.assertEqual(errand.params["monsterId"], "werewolf_lvl37_1")
 
+    def test_a_wallet_equally_good_at_both_takes_the_lagging_claw(self):
+        """Live 2026-09-13 10:36: 13,468 cyber claws owed against 13,130
+        werewolf, and level-33 wallets, 7% faster on werewolves, all chose
+        werewolves. Cyber came in at 39 an hour to the werewolf's 293."""
+        orch = self._orch(taught=None)
+        for _ in range(20):
+            orch.combat.record_battle(
+                "werewolf_lvl30_2", {"winner": "player", "xp": 90,
+                                     "items": [{"id": "werewolfclaw", "quantity": 1}]}, 9, 120)
+            orch.combat.record_battle(
+                "cyberbear_lvl33_2", {"winner": "player", "xp": 90,
+                                      "items": [{"id": "cyberclaw", "quantity": 1}]}, 8, 135)
+        quest = clan.parse_quest({
+            "requirements": [
+                {"itemId": "cyberclaw", "required": 16_000, "collected": 2_532},
+                {"itemId": "werewolfclaw", "required": 16_000, "collected": 2_870}],
+            "rewardDkpPool": 8_000, "rewardClanXp": 28_000,
+            "completedAt": None}, quest_id="q2")
+        errand = self._errand(
+            orch=orch, clan_ctx=self._clan(quest=quest),
+            state=self._state(level=33, grade=3, claimedInitialRewardsV2=list(range(1, 31)),
+                              attributes={"wisdom": 3, "vitality": 20},
+                              currentHealth=300, maxHealth=300))
+        self.assertIsNotNone(errand)
+        self.assertEqual(errand.params["monsterId"], "cyberbear_lvl33_2")
+
     def test_a_claw_owed_far_more_outranks_a_slightly_faster_one(self):
         orch = self._orch(taught=None)
         for _ in range(20):

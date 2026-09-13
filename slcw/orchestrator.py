@@ -1214,7 +1214,8 @@ class Orchestrator:
             } - {None}
             for source in sources:
                 pace = combat_mod.items_per_second(wanted, source, self.combat)
-                options.append((pace * owed / most, wanted, source))
+                weight = (owed / most) ** combat_mod.OWED_WEIGHT_POWER
+                options.append((pace * weight, wanted, source))
         if not options:
             return None
         _, item, monster = max(options)
