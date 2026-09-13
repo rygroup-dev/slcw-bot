@@ -138,6 +138,17 @@ class Orchestrator:
                 state, market, holdings, task_status=task_status,
                 inventory=inventory, wallet_id=wallet["id"],
                 clan_context=clan_context, cities=cities)
+            # The refill floor is one battle's worth of energy, but a caravan
+            # needs twenty. A wallet standing in a city with 2-19 energy can do
+            # nothing, so the bar never drains to the floor and the refills go
+            # unused — nineteen wallets sat idle in city_2 like that from
+            # 2026-09-10, with all three refills untouched, and fleet gold went
+            # from ~190k a day to zero. Idle with room in the bar is the one
+            # moment a refill wastes nothing that would otherwise be spent.
+            if (not candidates and self.config.enabled and not state.is_busy
+                    and state.free_refills_left() > 0
+                    and state.energy < state.max_energy):
+                candidates = [econ.energy_refill_candidate(state)]
             decision.considered = candidates
             if not candidates:
                 decision.action = "idle"

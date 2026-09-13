@@ -302,6 +302,32 @@ class FreeEnergyTests(unittest.TestCase):
         decision = orchestrator.decide_and_act({"id": "w1"}, None, self._state(0))
         self.assertEqual(decision.action, "refillEnergyFree")
 
+    def test_idle_wallet_refills_instead_of_waiting_for_the_floor(self):
+        """A caravan costs twenty energy and a city has no monsters, so a city
+        wallet at 2-19 energy never reaches the one-energy floor. On 2026-09-10
+        nineteen wallets stopped there with three refills each unused."""
+        api = FakeApi()
+        api.refill_energy_free = lambda session: api._record("refillEnergyFree")
+        orchestrator = make(config=Config(enabled=True, dry_run=False), api=api)
+        orchestrator.build_candidates = lambda *a, **k: []
+        decision = orchestrator.decide_and_act({"id": "w1"}, None, self._state(5))
+        self.assertEqual(decision.action, "refillEnergyFree")
+
+    def test_idle_wallet_with_a_full_bar_stays_idle(self):
+        orchestrator = make(config=Config(enabled=True, dry_run=False), api=FakeApi())
+        orchestrator.build_candidates = lambda *a, **k: []
+        decision = orchestrator.decide_and_act({"id": "w1"}, None, self._state(100))
+        self.assertEqual(decision.action, "idle")
+
+    def test_idle_wallet_without_refills_stays_idle(self):
+        import datetime
+        today = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+        orchestrator = make(config=Config(enabled=True, dry_run=False), api=FakeApi())
+        orchestrator.build_candidates = lambda *a, **k: []
+        decision = orchestrator.decide_and_act(
+            {"id": "w1"}, None, self._state(5, used=3, date=today))
+        self.assertEqual(decision.action, "idle")
+
     def test_no_refill_once_the_daily_quota_is_gone(self):
         orchestrator = make(config=Config(enabled=True, dry_run=False), api=FakeApi())
         import datetime
